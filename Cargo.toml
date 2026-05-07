@@ -28,3 +28,4 @@ tempfile = { version = "3", optional = true }
 
 [dev-dependencies]
 dtor = "1.0.1"
+serde_json = "1"

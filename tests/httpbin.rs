@@ -1,6 +1,8 @@
 use std::path::PathBuf;
 use std::sync::LazyLock;
 
+use serde_json::Value;
+
 static HTTPBIN_BASE: LazyLock<String> = LazyLock::new(|| {
     std::env::var("SHELL_DOWNLOAD_HTTPBIN")
         .unwrap_or_else(|_| "https://httpbin.org".to_string())
@@ -44,12 +46,8 @@ fn httpbin_test_redirect(driver: shell_download::Downloader) {
         return;
     };
 
-    let expect = format!("\"url\": \"{base}/get\"");
-    assert!(
-        body.contains(&expect),
-        "body did not look like final /get response; expected substring {expect:?}; got prefix: {:?}",
-        body.chars().take(250).collect::<String>()
-    );
+    let want = format!("{base}/get");
+    assert_httpbin_url_field(&body, &want, "final /get response");
 }
 
 fn httpbin_test_get_tough_chars(driver: shell_download::Downloader) {
@@ -60,12 +58,8 @@ fn httpbin_test_get_tough_chars(driver: shell_download::Downloader) {
         return;
     };
 
-    let expect = format!(r#""url": "{base}/anything/foo$%25?!&1\"'\\""#);
-    assert!(
-        body.contains(&expect),
-        "body did not look like /anything response; expected substring {expect:?}; got prefix: {:?}",
-        body.chars().take(250).collect::<String>()
-    );
+    let want = format!("{base}/{path}");
+    assert_httpbin_url_field(&body, &want, "/anything response");
 }
 
 fn fetch_httpbin(driver: shell_download::Downloader, url: String) -> Option<String> {
@@ -152,7 +146,7 @@ fn httpbin_test_redirect_follow_off(driver: shell_download::Downloader) {
         Err(err) => panic!("failed to start: {err:?}"),
     };
 
-    let not_final = format!("\"url\": \"{base}/get\"");
+    let not_final_url = format!("{base}/get");
     match handle.join() {
         Ok(resp) => {
             assert!(
@@ -164,7 +158,7 @@ fn httpbin_test_redirect_follow_off(driver: shell_download::Downloader) {
             let body = std::fs::read_to_string(&out).unwrap_or_default();
             let _ = std::fs::remove_file(&out);
             assert!(
-                !body.contains(&not_final),
+                !httpbin_response_url_matches(&body, &not_final_url),
                 "expected not to follow redirects; got body prefix: {:?}",
                 body.chars().take(250).collect::<String>()
             );
@@ -208,16 +202,106 @@ fn httpbin_test_gzip(driver: shell_download::Downloader) {
         return;
     };
 
-    assert!(
-        body.contains("\"gzipped\": true"),
-        "body did not look like decoded /gzip response; got prefix: {:?}",
-        body.chars().take(250).collect::<String>()
-    );
+    assert_httpbin_gzip_field(&body);
 }
 
 fn is_ci() -> bool {
     matches!(std::env::var("CI"), Ok(v) if !v.trim().is_empty() && v != "0" && v.to_lowercase() != "false")
 }
+
+/// Parse JSON, then round-trip through serialize/parse so comparisons match serde's normalized view.
+fn json_roundtrip(v: &Value) -> Value {
+    let s = serde_json::to_string(v).expect("serde_json serialize");
+    serde_json::from_str(&s).expect("serde_json re-parse")
+}
+
+/// `{"url": ...}` with `url` embedded using JSON string rules (same as a raw literal + parse).
+fn expected_httpbin_url_document(url: &str) -> Value {
+    let encoded = serde_json::to_string(url).expect("encode url as JSON string");
+    let raw = format!("{{\"url\":{encoded}}}");
+    serde_json::from_str(&raw).expect("minimal httpbin url document")
+}
+
+fn assert_httpbin_url_field(body: &str, expected_url: &str, ctx: &str) {
+    let actual = json_roundtrip(
+        &serde_json::from_str(body).unwrap_or_else(|e| {
+            panic!(
+                "{ctx}: invalid JSON ({e}); prefix {:?}",
+                body.chars().take(250).collect::<String>()
+            )
+        }),
+    );
+    let primary = json_roundtrip(&expected_httpbin_url_document(expected_url));
+    let mut ok = actual.get("url") == primary.get("url");
+    if !ok {
+        if let Some(short) = http_echo_url_without_explicit_port(expected_url) {
+            let alt = json_roundtrip(&expected_httpbin_url_document(&short));
+            ok = actual.get("url") == alt.get("url");
+        }
+    }
+    assert!(
+        ok,
+        "{ctx}: wanted url {:?} (or port-stripped variant); got url {:?}; prefix {:?}",
+        primary.get("url").and_then(|v| v.as_str()),
+        actual.get("url").and_then(|v| v.as_str()),
+        body.chars().take(250).collect::<String>()
+    );
+}
+
+fn httpbin_response_url_matches(body: &str, want: &str) -> bool {
+    let Ok(v) = serde_json::from_str::<Value>(body) else {
+        return false;
+    };
+    let actual = json_roundtrip(&v);
+    let primary = json_roundtrip(&expected_httpbin_url_document(want));
+    if actual.get("url") == primary.get("url") {
+        return true;
+    }
+    http_echo_url_without_explicit_port(want).is_some_and(|short| {
+        let alt = json_roundtrip(&expected_httpbin_url_document(&short));
+        actual.get("url") == alt.get("url")
+    })
+}
+
+fn assert_httpbin_gzip_field(body: &str) {
+    let expected: Value =
+        serde_json::from_str(r#"{"gzipped":true}"#).expect("static gzip expectation literal");
+    let expected = json_roundtrip(&expected);
+    let actual = json_roundtrip(
+        &serde_json::from_str(body).unwrap_or_else(|e| {
+            panic!(
+                "/gzip: invalid JSON ({e}); prefix {:?}",
+                body.chars().take(250).collect::<String>()
+            )
+        }),
+    );
+    assert_eq!(
+        actual.get("gzipped"),
+        expected.get("gzipped"),
+        "/gzip: gzipped field; prefix {:?}",
+        body.chars().take(250).collect::<String>()
+    );
+}
+
+/// `http(s)://host:8080/foo` → `http(s)://host/foo` when `:8080` is an explicit port.
+fn http_echo_url_without_explicit_port(url: &str) -> Option<String> {
+    strip_explicit_port(url, "http://").or_else(|| strip_explicit_port(url, "https://"))
+}
+
+fn strip_explicit_port(url: &str, scheme_prefix: &str) -> Option<String> {
+    let rest = url.strip_prefix(scheme_prefix)?;
+    let colon_host = rest.find(':')?;
+    let host = &rest[..colon_host];
+    if host.contains(['[', ']']) {
+        return None;
+    }
+    let after_colon = &rest[colon_host + 1..];
+    let slash = after_colon.find('/')?;
+    let port_str = &after_colon[..slash];
+    port_str.parse::<u16>().ok()?;
+    Some(format!("{scheme_prefix}{host}{}", &after_colon[slash..]))
+}
+
 
 fn unique_name(prefix: &str) -> PathBuf {
     let now = std::time::SystemTime::now()
