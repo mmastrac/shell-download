@@ -2,6 +2,12 @@
 name = "shell-download"
 version = "0.1.0"
 edition = "2024"
+authors = ["Matt Mastracci <matthew@mastracci.com>"]
+license = "Apache-2.0 OR MIT"
+repository = "https://github.com/mmastrac/shell-download"
+readme = "README.md"
+categories = ["network::http", "network::http::client", "network::http::client::download"]
+rust-version = "1.85"
 
 [lib]
 path = "src/lib.rs"
