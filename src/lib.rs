@@ -21,6 +21,8 @@ pub enum Downloader {
     Wget,
     /// Use PowerShell (`pwsh`/`powershell`).
     PowerShell,
+    /// Use Python `urllib`.
+    Python3,
     /// Speak HTTP/1.1 via `openssl s_client` or TCP socket (best-effort).
     OpenSsl,
 }
@@ -183,12 +185,14 @@ impl Downloader {
         static WGET: drivers::wget::WgetDriver = drivers::wget::WgetDriver;
         static POWERSHELL: drivers::powershell::PowerShellDriver =
             drivers::powershell::PowerShellDriver;
+        static PYTHON3: drivers::python3::Python3Driver = drivers::python3::Python3Driver;
         static OPENSSL: drivers::openssl::OpenSslDriver = drivers::openssl::OpenSslDriver;
 
         match self {
             Downloader::Curl => &CURL,
             Downloader::Wget => &WGET,
             Downloader::PowerShell => &POWERSHELL,
+            Downloader::Python3 => &PYTHON3,
             Downloader::OpenSsl => &OPENSSL,
         }
     }
@@ -306,6 +310,7 @@ fn candidate_downloaders(preferred: &[Downloader]) -> Vec<Downloader> {
         Downloader::Curl,
         Downloader::Wget,
         Downloader::PowerShell,
+        Downloader::Python3,
         Downloader::OpenSsl,
     ]
 }

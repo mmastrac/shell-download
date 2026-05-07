@@ -7,8 +7,8 @@
 A zero-dependency Rust library for downloading a URL to a file by delegating to
 whatever download tools are available on the current system.
 
-It hunts for (in order): `curl`, `wget`, `pwsh`/`powershell`, and finally
-`openssl` (HTTPS via `openssl s_client`, HTTP via a raw TCP GET).
+It hunts for (in order): `curl`, `wget`, `pwsh`/`powershell`, `python3`, and
+finally `openssl` (HTTPS via `openssl s_client`, HTTP via a raw TCP GET).
 
 - The caller provides a target path.
 - That file is unlinked before the request starts.
