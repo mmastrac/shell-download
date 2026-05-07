@@ -118,7 +118,7 @@ sys.exit(_main(sys.argv))
         cmd.arg("-c")
             .arg(script)
             .arg(&req.url)
-            .arg(&out_path)
+            .arg(out_path)
             .arg(if req.follow_redirects { "1" } else { "0" });
 
         for (k, v) in util::add_common_headers(&req) {

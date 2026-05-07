@@ -154,11 +154,7 @@ impl RequestBuilder {
         for d in candidate_downloaders(&self.preferred) {
             match d
                 .driver()
-                .start(
-                    self.clone(),
-                    tmp_path.as_ref(),
-                    Arc::clone(&cancel),
-                )
+                .start(self.clone(), tmp_path.as_ref(), Arc::clone(&cancel))
             {
                 Ok(join) => {
                     return Ok(RequestHandle {

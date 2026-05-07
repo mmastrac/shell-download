@@ -19,7 +19,7 @@ impl Driver for WgetDriver {
     ) -> Result<JoinHandle<Result<DownloadResult, ResponseError>>, StartError> {
         let mut cmd = Command::new("wget");
         cmd.arg("-O")
-            .arg(&out_path)
+            .arg(out_path)
             .arg("--server-response")
             .arg(&req.url);
         if !req.follow_redirects {

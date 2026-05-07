@@ -12,31 +12,37 @@ mod simple {
 
     #[derive(Debug)]
     pub(crate) struct TmpFile {
-        path: PathBuf,
+        path: Option<PathBuf>,
     }
 
     impl TmpFile {
         fn new(path: PathBuf) -> Self {
-            Self { path }
+            Self { path: Some(path) }
         }
 
         pub(crate) fn persist<P: AsRef<Path>>(self, new_path: P) -> io::Result<File> {
+            let mut this = self;
             let new_path = new_path.as_ref();
             let _ = std::fs::remove_file(new_path);
-            std::fs::rename(&self.path, new_path)?;
+            let src = this.path.as_deref().expect("tmp path present");
+            std::fs::rename(src, new_path)?;
+            // Once persisted, we no longer own a path to clean up.
+            this.path = None;
             File::open(new_path)
         }
     }
 
     impl AsRef<Path> for TmpFile {
         fn as_ref(&self) -> &Path {
-            &self.path
+            self.path.as_deref().expect("tmp path present")
         }
     }
 
     impl Drop for TmpFile {
         fn drop(&mut self) {
-            let _ = std::fs::remove_file(&self.path);
+            if let Some(p) = &self.path {
+                let _ = std::fs::remove_file(p);
+            }
         }
     }
 
