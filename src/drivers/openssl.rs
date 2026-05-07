@@ -13,9 +13,11 @@ use crate::{
 };
 
 #[derive(Debug, Clone, Copy)]
+/// OpenSSL/TCP backend (minimal HTTP client).
 pub(crate) struct OpenSslDriver;
 
 impl Driver for OpenSslDriver {
+    /// Start a download using TCP (HTTP) or `openssl s_client` (HTTPS).
     fn start(
         &self,
         req: RequestBuilder,
@@ -53,6 +55,7 @@ impl Driver for OpenSslDriver {
     }
 }
 
+/// Perform a download, handling redirects and basic decoding.
 fn download_inner(
     req: &RequestBuilder,
     out: &Path,
@@ -105,6 +108,7 @@ fn download_inner(
     }
 }
 
+/// Fetch an HTTP URL via `TcpStream`.
 fn get_http_via_tcp(
     url: &Url,
     req: &RequestBuilder,
@@ -148,6 +152,7 @@ fn get_http_via_tcp(
     parse_http_response_from_openssl_output(&buf)
 }
 
+/// Fetch an HTTPS URL via `openssl s_client`.
 fn get_https_via_openssl(
     url: &Url,
     req: &RequestBuilder,
@@ -217,10 +222,12 @@ fn get_https_via_openssl(
     parse_http_response_from_openssl_output(&buf)
 }
 
+/// Return true for common redirect codes.
 fn is_redirect(code: u16) -> bool {
     matches!(code, 301 | 302 | 303 | 307 | 308)
 }
 
+/// Resolve a `Location` header against the current URL (best-effort).
 fn resolve_location(current_url: &str, location: &str) -> String {
     let location = location.trim();
     if location.contains("://") {
@@ -238,6 +245,7 @@ fn resolve_location(current_url: &str, location: &str) -> String {
     location.to_string()
 }
 
+/// Parse a raw HTTP response, discarding any `openssl` prelude.
 fn parse_http_response_from_openssl_output(
     all: &[u8],
 ) -> Result<(u16, Vec<(String, String)>, Vec<u8>), ResponseError> {
@@ -271,10 +279,12 @@ fn parse_http_response_from_openssl_output(
     Ok((code, headers, body_bytes.to_vec()))
 }
 
+/// Find the first occurrence of `needle` in `haystack`.
 fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     haystack.windows(needle.len()).position(|w| w == needle)
 }
 
+/// Find the first matching header value (case-insensitive).
 fn header_value<'a>(headers: &'a [(String, String)], key: &str) -> Option<&'a str> {
     headers
         .iter()
@@ -282,6 +292,7 @@ fn header_value<'a>(headers: &'a [(String, String)], key: &str) -> Option<&'a st
         .map(|(_, v)| v.as_str())
 }
 
+/// Decode a `Transfer-Encoding: chunked` body.
 fn decode_chunked(mut body: &[u8]) -> Result<Vec<u8>, ResponseError> {
     let mut out = Vec::new();
     loop {

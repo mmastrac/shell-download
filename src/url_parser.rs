@@ -1,17 +1,26 @@
+/// Parsed URL components used by the built-in downloader.
 pub struct Url {
+    /// URL scheme (lowercased when parsed without the `url` feature).
     pub scheme: String,
+    /// Host name.
     pub host: String,
+    /// Explicit port, if provided.
     pub port: Option<u16>,
+    /// Path (always starts with `/`).
     pub path: String,
+    /// Raw query string (without `?`).
     pub query: Option<String>,
+    /// Raw fragment string (without `#`).
     pub fragment: Option<String>,
 }
 
 impl Url {
+    /// Parse a URL string.
     pub fn new(url: &str) -> Result<Self, Error> {
         parse_url(url).map_err(Error::Parse)
     }
 
+    /// Return the path plus query, if present.
     pub fn path_and_query(&self) -> String {
         match &self.query {
             Some(q) if !q.is_empty() => format!("{}?{}", self.path, q),
@@ -19,6 +28,7 @@ impl Url {
         }
     }
 
+    /// Return `host[:port]`.
     pub fn authority(&self) -> String {
         match self.port {
             Some(p) => format!("{}:{}", self.host, p),
@@ -29,13 +39,16 @@ impl Url {
 
 #[allow(dead_code)]
 impl Url {
+    /// Return the fragment, if present.
     pub fn fragment(&self) -> Option<&str> {
         self.fragment.as_deref()
     }
 }
 
 #[derive(Debug)]
+/// URL parse error.
 pub enum Error {
+    /// Parse failure message.
     Parse(String),
 }
 
@@ -50,6 +63,7 @@ impl std::fmt::Display for Error {
 impl std::error::Error for Error {}
 
 #[cfg(feature = "url")]
+/// Parse using the `url` crate when enabled.
 fn parse_url(input: &str) -> Result<Url, String> {
     let u = url::Url::parse(input).map_err(|e| e.to_string())?;
     let scheme = u.scheme().to_string();
@@ -81,6 +95,7 @@ fn parse_url(input: &str) -> Result<Url, String> {
 }
 
 #[cfg(not(feature = "url"))]
+/// Parse a URL using a small built-in parser.
 fn parse_url(input: &str) -> Result<Url, String> {
     // Very small, best-effort parser:
     // scheme://host[:port]/path?query#fragment

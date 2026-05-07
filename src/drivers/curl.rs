@@ -5,9 +5,11 @@ use std::thread::JoinHandle;
 use crate::{DownloadResult, RequestBuilder, ResponseError, StartError, drivers::Driver, util};
 
 #[derive(Debug, Clone, Copy)]
+/// `curl` backend.
 pub(crate) struct CurlDriver;
 
 impl Driver for CurlDriver {
+    /// Start a download using `curl`.
     fn start(
         &self,
         req: RequestBuilder,

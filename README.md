@@ -29,15 +29,17 @@ By default, these features are not enabled, making the crate zero-dependency.
 ```rust
 use shell_download::{Downloader, RequestBuilder};
 
-fn main() -> Result<(), shell_download::Error> {
-    let out = std::path::Path::new("downloaded.json");
+fn main() -> Result<(), shell_download::ResponseError> {
+    // NOTE: This should use a secure temporary file name!
+    let out = std::env::temp_dir().join("downloaded.json");
 
     let handle = RequestBuilder::new("https://httpbin.org/redirect/5")
         .header("User-Agent", "shell-download/0.1")
         .follow_redirects(true)
         // Optional: force a specific backend (useful for tests)
         .preferred_downloader(Downloader::Curl)
-        .start(out)?;
+        .start(&out)
+        .map_err(shell_download::ResponseError::Start)?;
 
     // Optional: cancel from another thread if you need to abort
     // handle.cancel();
@@ -50,3 +52,4 @@ fn main() -> Result<(), shell_download::Error> {
 
     Ok(())
 }
+```

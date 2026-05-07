@@ -11,6 +11,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::{DownloadResult, Quiet, RequestBuilder, ResponseError, StartError};
 
+/// Create a process-unique suffix for temporary files.
 pub(crate) fn unique_suffix() -> Option<String> {
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -19,6 +20,7 @@ pub(crate) fn unique_suffix() -> Option<String> {
     Some(format!("{}-{}", std::process::id(), now))
 }
 
+/// Ensure common headers are present (notably gzip support).
 pub(crate) fn add_common_headers(req: &RequestBuilder) -> Vec<(String, String)> {
     let mut headers = req.headers.clone();
     if !headers
@@ -30,6 +32,7 @@ pub(crate) fn add_common_headers(req: &RequestBuilder) -> Vec<(String, String)> 
     headers
 }
 
+/// Spawn a child process with captured stdout/stderr.
 pub(crate) fn spawn_child_for_output(
     mut cmd: Command,
     _program: &'static str,
@@ -44,6 +47,7 @@ pub(crate) fn spawn_child_for_output(
     }
 }
 
+/// Find all matching executables in `PATH`.
 pub(crate) fn find_program_in_path(program: &str) -> Vec<PathBuf> {
     let mut out = Vec::new();
 
@@ -88,6 +92,7 @@ pub(crate) fn find_program_in_path(program: &str) -> Vec<PathBuf> {
     out
 }
 
+/// Wait for a child process, supporting cancellation and output forwarding.
 pub(crate) fn wait_child_with_output(
     mut child: Child,
     cancel: &Arc<AtomicBool>,
@@ -133,6 +138,7 @@ pub(crate) fn wait_child_with_output(
     Ok(output)
 }
 
+/// Spawn a worker thread that runs a backend download function.
 pub(crate) fn spawn_download_thread<F>(
     req: RequestBuilder,
     out_path: PathBuf,
@@ -159,6 +165,7 @@ where
     })
 }
 
+/// Derive a unique temporary path for a target path.
 pub(crate) fn tmp_path_for_target(target_path: &Path) -> PathBuf {
     let mut tmp = target_path.to_path_buf();
     tmp.set_extension(format!(
@@ -168,6 +175,7 @@ pub(crate) fn tmp_path_for_target(target_path: &Path) -> PathBuf {
     tmp
 }
 
+/// Move or decode the temp file into its final location.
 pub(crate) fn finalize_download(
     tmp_path: &Path,
     target_path: &Path,
@@ -184,6 +192,7 @@ pub(crate) fn finalize_download(
     Ok(())
 }
 
+/// Check for a gzip magic header.
 pub(crate) fn file_looks_gzipped(path: &Path) -> io::Result<bool> {
     let mut f = std::fs::File::open(path)?;
     let mut b = [0u8; 2];
@@ -191,6 +200,7 @@ pub(crate) fn file_looks_gzipped(path: &Path) -> io::Result<bool> {
     Ok(n == 2 && b == [0x1f, 0x8b])
 }
 
+/// Gunzip `src` into `dst` using the system `gzip`.
 pub(crate) fn gunzip_to_target(src: &Path, dst: &Path) -> Result<(), ResponseError> {
     let mut cmd = Command::new("gzip");
     cmd.arg("-dc")

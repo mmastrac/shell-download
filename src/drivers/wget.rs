@@ -5,9 +5,11 @@ use std::thread::JoinHandle;
 use crate::{DownloadResult, RequestBuilder, ResponseError, StartError, drivers::Driver, util};
 
 #[derive(Debug, Clone, Copy)]
+/// `wget` backend.
 pub(crate) struct WgetDriver;
 
 impl Driver for WgetDriver {
+    /// Start a download using `wget`.
     fn start(
         &self,
         req: RequestBuilder,

@@ -5,9 +5,11 @@ use std::thread::JoinHandle;
 use crate::{DownloadResult, RequestBuilder, ResponseError, StartError, drivers::Driver, util};
 
 #[derive(Debug, Clone, Copy)]
+/// PowerShell (`pwsh`/`powershell`) backend.
 pub(crate) struct PowerShellDriver;
 
 impl Driver for PowerShellDriver {
+    /// Start a download using PowerShell.
     fn start(
         &self,
         req: RequestBuilder,
@@ -18,6 +20,7 @@ impl Driver for PowerShellDriver {
     }
 }
 
+/// Implementation for the PowerShell backend.
 fn start_inner(
     req: RequestBuilder,
     out_path: std::path::PathBuf,
@@ -126,11 +129,13 @@ fn start_inner(
     ))
 }
 
+/// Escape a value for a single-quoted PowerShell string.
 fn escape_ps(s: &str) -> String {
     s.replace('\'', "''")
 }
 
 // Returns ordered (exe, use_basic_parsing) candidates.
+/// Find PowerShell executables in priority order.
 fn find_powershell_candidates() -> Vec<(&'static str, bool)> {
     // Prefer pwsh if present.
     let mut out = Vec::new();

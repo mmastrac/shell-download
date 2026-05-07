@@ -1,3 +1,5 @@
+#![doc = include_str!("../README.md")]
+
 mod drivers;
 mod url_parser;
 mod util;
@@ -11,14 +13,20 @@ use std::sync::{
 use std::thread::JoinHandle;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// A supported download backend.
 pub enum Downloader {
+    /// Use `curl`.
     Curl,
+    /// Use `wget`.
     Wget,
+    /// Use PowerShell (`pwsh`/`powershell`).
     PowerShell,
+    /// Speak HTTP/1.1 via `openssl s_client` or TCP socket (best-effort).
     OpenSsl,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Controls forwarding of child stdout/stderr.
 pub enum Quiet {
     /// Never be quiet: always forward child stdout/stderr to the parent process.
     Never,
@@ -29,6 +37,7 @@ pub enum Quiet {
 }
 
 #[derive(Debug, Clone)]
+/// Builder for a single download request.
 pub struct RequestBuilder {
     pub(crate) url: String,
     pub(crate) headers: Vec<(String, String)>,
@@ -38,12 +47,16 @@ pub struct RequestBuilder {
 }
 
 #[derive(Debug, Clone)]
+/// Low-level download result prior to finalizing the output file.
 pub struct DownloadResult {
+    /// HTTP status code (best-effort).
     pub status_code: u16,
+    /// Whether the server declared gzip encoding.
     pub content_encoding_gzip: bool,
 }
 
 impl RequestBuilder {
+    /// Create a new request builder.
     pub fn new(url: impl Into<String>) -> Self {
         Self {
             url: url.into(),
@@ -54,21 +67,25 @@ impl RequestBuilder {
         }
     }
 
+    /// Add an HTTP header.
     pub fn header(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
         self.headers.push((key.into(), value.into()));
         self
     }
 
+    /// Prefer a specific downloader backend.
     pub fn preferred_downloader(mut self, preferred: Downloader) -> Self {
         self.preferred.push(preferred);
         self
     }
 
+    /// Enable or disable HTTP redirect following.
     pub fn follow_redirects(mut self, follow_redirects: bool) -> Self {
         self.follow_redirects = follow_redirects;
         self
     }
 
+    /// Control forwarding of child output.
     pub fn quiet(mut self, quiet: Quiet) -> Self {
         self.quiet = quiet;
         self
@@ -94,6 +111,7 @@ impl RequestBuilder {
         std::fs::read(tmp_file.path()).map_err(ResponseError::Io)
     }
 
+    /// Start the download in a background thread.
     pub fn start(self, target_path: impl AsRef<Path>) -> Result<RequestHandle, StartError> {
         let target_path = target_path.as_ref().to_path_buf();
 
@@ -170,6 +188,7 @@ impl Downloader {
 }
 
 #[derive(Debug)]
+/// Handle for a running download.
 pub struct RequestHandle {
     cancel: Arc<AtomicBool>,
     join: Option<JoinHandle<Result<DownloadResult, ResponseError>>>,
@@ -178,10 +197,12 @@ pub struct RequestHandle {
 }
 
 impl RequestHandle {
+    /// Request cancellation (best-effort).
     pub fn cancel(&self) {
         self.cancel.store(true, Ordering::SeqCst);
     }
 
+    /// Wait for completion and finalize the output file.
     pub fn join(mut self) -> Result<Response, ResponseError> {
         let res = match self.join.take().expect("join called once").join() {
             Ok(r) => r,
@@ -205,14 +226,20 @@ impl Drop for RequestHandle {
 }
 
 #[derive(Debug, Clone)]
+/// Final response metadata for a completed download.
 pub struct Response {
+    /// HTTP status code (best-effort).
     pub status_code: u16,
 }
 
 #[derive(Debug)]
+/// Errors that can occur while starting a download.
 pub enum StartError {
+    /// No usable backend executable was found.
     NoDriverFound,
+    /// A local I/O error occurred.
     IoError(io::Error),
+    /// URL validation failed.
     Url(String),
 }
 
@@ -223,22 +250,37 @@ impl From<io::Error> for StartError {
 }
 
 #[derive(Debug)]
+/// Errors that can occur while running a request.
 pub enum ResponseError {
+    /// A local I/O error occurred.
     Io(io::Error),
+    /// The URL could not be parsed.
     InvalidUrl,
+    /// The URL scheme is unsupported.
     UnsupportedScheme,
+    /// The request was cancelled.
     Cancelled,
+    /// The worker thread panicked.
     ThreadPanicked,
+    /// The backend command failed.
     CommandFailed {
+        /// Backend program label.
         program: &'static str,
+        /// Process exit code, if available.
         exit_code: Option<i32>,
+        /// Captured stderr (best-effort).
         stderr: String,
     },
+    /// The backend returned a non-numeric status code.
     BadStatusCode(String),
+    /// Gzip decoding failed.
     GzipFailed {
+        /// Process exit code, if available.
         exit_code: Option<i32>,
+        /// Captured stderr (best-effort).
         stderr: String,
     },
+    /// Download start failed.
     Start(StartError),
 }
 
@@ -248,6 +290,7 @@ impl From<io::Error> for ResponseError {
     }
 }
 
+/// Choose downloaders in priority order.
 fn candidate_downloaders(preferred: &[Downloader]) -> Vec<Downloader> {
     if !preferred.is_empty() {
         return preferred.to_vec();

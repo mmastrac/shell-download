@@ -4,7 +4,9 @@ use std::thread::JoinHandle;
 
 use crate::{DownloadResult, RequestBuilder, ResponseError, StartError};
 
+/// Backend driver interface.
 pub(crate) trait Driver {
+    /// Start a download and return a join handle for its result.
     fn start(
         &self,
         req: RequestBuilder,
