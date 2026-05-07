@@ -13,17 +13,23 @@ mod simple {
     #[derive(Debug)]
     pub(crate) struct TmpFile {
         path: Option<PathBuf>,
+        file: Option<File>,
     }
 
     impl TmpFile {
-        fn new(path: PathBuf) -> Self {
-            Self { path: Some(path) }
+        fn new(path: PathBuf, file: File) -> Self {
+            Self {
+                path: Some(path),
+                file: Some(file),
+            }
         }
 
         pub(crate) fn persist<P: AsRef<Path>>(self, new_path: P) -> io::Result<File> {
             let mut this = self;
             let new_path = new_path.as_ref();
             let _ = std::fs::remove_file(new_path);
+            // Close the file before renaming (especially important on Windows).
+            this.file = None;
             let src = this.path.as_deref().expect("tmp path present");
             std::fs::rename(src, new_path)?;
             // Once persisted, we no longer own a path to clean up.
@@ -40,6 +46,8 @@ mod simple {
 
     impl Drop for TmpFile {
         fn drop(&mut self) {
+            // Ensure the handle is closed before removing.
+            self.file = None;
             if let Some(p) = &self.path {
                 let _ = std::fs::remove_file(p);
             }
@@ -85,7 +93,7 @@ mod simple {
             }
 
             match opts.open(&path) {
-                Ok(_file) => return Ok(TmpFile::new(path)),
+                Ok(file) => return Ok(TmpFile::new(path, file)),
                 Err(e) if e.kind() == io::ErrorKind::AlreadyExists => continue,
                 Err(e) => return Err(e),
             }
