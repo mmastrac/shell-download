@@ -114,7 +114,7 @@ fn fetch_httpbin_raw(
 }
 
 fn httpbin_test_redirect_follow_off(driver: shell_download::Downloader) {
-    let url = "https://httpbin.org/redirect/5";
+    let url = "https://httpbin.org/redirect/2";
     let mut out = std::env::temp_dir();
     out.push(unique_name(&format!(
         "shell-download-httpbin-follow-off-{driver:?}"
