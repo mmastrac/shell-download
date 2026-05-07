@@ -25,6 +25,7 @@ pub struct RequestBuilder {
     pub(crate) headers: Vec<(String, String)>,
     pub(crate) preferred: Option<Downloader>,
     pub(crate) follow_redirects: bool,
+    pub(crate) quiet: bool,
 }
 
 impl RequestBuilder {
@@ -34,6 +35,7 @@ impl RequestBuilder {
             headers: Vec::new(),
             preferred: None,
             follow_redirects: true,
+            quiet: false,
         }
     }
 
@@ -49,6 +51,11 @@ impl RequestBuilder {
 
     pub fn follow_redirects(mut self, follow_redirects: bool) -> Self {
         self.follow_redirects = follow_redirects;
+        self
+    }
+
+    pub fn quiet(mut self, quiet: bool) -> Self {
+        self.quiet = quiet;
         self
     }
 

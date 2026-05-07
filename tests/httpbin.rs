@@ -35,6 +35,7 @@ fn fetch_httpbin_redirect(driver: shell_download::Downloader) {
     out.push(unique_name(&format!("shell-download-httpbin-{driver:?}")));
 
     let handle = shell_download::RequestBuilder::new("https://httpbin.org/redirect/5")
+        .quiet(false)
         .preferred_downloader(driver)
         .start(&out);
 

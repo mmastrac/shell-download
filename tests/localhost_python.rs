@@ -65,6 +65,7 @@ fn hit_localhost(driver: shell_download::Downloader) {
 
     let url = format!("{}/test-file.html", server.base_url.trim_end_matches('/'));
     let handle = shell_download::RequestBuilder::new(url)
+        .quiet(false)
         .preferred_downloader(driver)
         .start(&out);
 

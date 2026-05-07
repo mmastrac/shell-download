@@ -76,7 +76,7 @@ fn download_inner(
         .arg("-Command")
         .arg(script);
 
-    let output = util::run_cancellable_command(cmd, cancel, program)?;
+    let output = util::run_cancellable_command(cmd, cancel, program, req.quiet)?;
     let code_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
     let code: u16 = code_str.parse().map_err(|_| Error::BadStatusCode(code_str))?;
     Ok((code, false))

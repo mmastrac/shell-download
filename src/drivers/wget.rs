@@ -26,7 +26,7 @@ impl Driver for WgetDriver {
             cmd.arg("--header").arg(format!("{k}: {v}"));
         }
 
-        let output = util::run_cancellable_command(cmd, cancel, "wget")?;
+        let output = util::run_cancellable_command(cmd, cancel, "wget", req.quiet)?;
         let stderr = String::from_utf8_lossy(&output.stderr);
         let mut last_code: Option<u16> = None;
         for line in stderr.lines() {

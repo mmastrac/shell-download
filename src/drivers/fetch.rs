@@ -20,7 +20,7 @@ impl Driver for FetchDriver {
         let mut cmd = Command::new("fetch");
         cmd.arg("-q").arg("-o").arg(out).arg(&req.url);
         let _ = util::add_common_headers(req);
-        let _output = util::run_cancellable_command(cmd, cancel, "fetch")?;
+        let _output = util::run_cancellable_command(cmd, cancel, "fetch", req.quiet)?;
         Ok((200, false))
     }
 }

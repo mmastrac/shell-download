@@ -34,7 +34,7 @@ impl Driver for CurlDriver {
             cmd.arg("-H").arg(format!("{k}: {v}"));
         }
 
-        let output = util::run_cancellable_command(cmd, cancel, "curl")?;
+        let output = util::run_cancellable_command(cmd, cancel, "curl", req.quiet)?;
         let code_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
         let code: u16 = code_str.parse().map_err(|_| Error::BadStatusCode(code_str))?;
         Ok((code, false))

@@ -64,6 +64,7 @@ pub(crate) fn run_cancellable_command(
     mut cmd: Command,
     cancel: &Arc<AtomicBool>,
     program: &'static str,
+    quiet: bool,
 ) -> Result<std::process::Output, Error> {
     cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
     let mut child = cmd.spawn().map_err(Error::Io)?;
@@ -83,6 +84,13 @@ pub(crate) fn run_cancellable_command(
     }
 
     let output = child.wait_with_output().map_err(Error::Io)?;
+
+    // TODO: This should print "live" output
+    if !quiet {
+        println!("{}", String::from_utf8_lossy(&output.stdout));
+        eprintln!("{}", String::from_utf8_lossy(&output.stderr));
+    }
+
     if !output.status.success() {
         return Err(Error::CommandFailed {
             program,
