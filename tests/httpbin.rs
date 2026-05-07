@@ -21,10 +21,23 @@ fn fetch_httpbin_redirect_openssl() {
 }
 
 fn fetch_httpbin_redirect(driver: shell_download::Downloader) {
+    let url = "https://httpbin.org/redirect/5";
+    let Some(body) = fetch_httpbin(driver, url.to_string()) else {
+        return;
+    };
+
+    assert!(
+        body.contains("\"url\": \"https://httpbin.org/get\""),
+        "body did not look like final /get response; got prefix: {:?}",
+        body.chars().take(250).collect::<String>()
+    );
+}
+
+fn fetch_httpbin(driver: shell_download::Downloader, url: String) -> Option<String> {
     let mut out = std::env::temp_dir();
     out.push(unique_name(&format!("shell-download-httpbin-{driver:?}")));
 
-    let handle = shell_download::RequestBuilder::new("https://httpbin.org/redirect/5")
+    let handle = shell_download::RequestBuilder::new(url)
         .quiet(shell_download::Quiet::Never)
         .preferred_downloader(driver)
         .start(&out);
@@ -35,7 +48,7 @@ fn fetch_httpbin_redirect(driver: shell_download::Downloader) {
             if is_ci() {
                 panic!("failed to start downloader in CI");
             }
-            return;
+            return None;
         }
         Err(err) => panic!("failed to start: {err:?}"),
     };
@@ -49,15 +62,8 @@ fn fetch_httpbin_redirect(driver: shell_download::Downloader) {
     );
 
     let body = std::fs::read_to_string(&out).expect("read output file");
-    assert!(
-        body.contains("\"url\": \"https://httpbin.org/get\"")
-            || body.contains("\"url\": \"http://httpbin.org/get\"")
-            || body.contains("httpbin.org/get"),
-        "body did not look like final /get response; got prefix: {:?}",
-        body.chars().take(250).collect::<String>()
-    );
-
-    let _ = std::fs::remove_file(&out);
+    std::fs::remove_file(&out).expect("remove output file");
+    Some(body)
 }
 
 fn is_ci() -> bool {
