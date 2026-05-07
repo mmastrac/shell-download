@@ -281,14 +281,12 @@ fn assert_httpbin_gzip_field(body: &str) {
     let expected: Value =
         serde_json::from_str(r#"{"gzipped":true}"#).expect("static gzip expectation literal");
     let expected = json_roundtrip(&expected);
-    let actual = json_roundtrip(
-        &serde_json::from_str(body).unwrap_or_else(|e| {
-            panic!(
-                "/gzip: invalid JSON ({e}); prefix {:?}",
-                body.chars().take(250).collect::<String>()
-            )
-        }),
-    );
+    let actual = json_roundtrip(&serde_json::from_str(body).unwrap_or_else(|e| {
+        panic!(
+            "/gzip: invalid JSON ({e}); prefix {:?}",
+            body.chars().take(250).collect::<String>()
+        )
+    }));
     assert_eq!(
         actual.get("gzipped"),
         expected.get("gzipped"),

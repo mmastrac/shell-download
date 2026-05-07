@@ -158,8 +158,7 @@ fn start_inner(
         &out_path,
         cancel,
         move |req, _tmp_path, cancel| {
-            let output =
-                util::wait_child_with_output(child, cancel, program_label, req.quiet)?;
+            let output = util::wait_child_with_output(child, cancel, program_label, req.quiet)?;
             let stderr_str = String::from_utf8_lossy(&output.stderr).to_string();
             let status_line = stderr_str
                 .lines()

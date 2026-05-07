@@ -6,7 +6,7 @@ mod url_parser;
 mod util;
 
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
@@ -118,7 +118,9 @@ impl RequestBuilder {
             "shell-download-in-memory",
         )
         .map_err(ResponseError::Io)?;
-        let handle = self.start(&tmp).map_err(ResponseError::Start)?;
+        let handle = self
+            .start_internal(tmp.as_ref().to_path_buf())
+            .map_err(ResponseError::Start)?;
         let _res = handle.join()?;
         std::fs::read(&tmp).map_err(ResponseError::Io)
     }
@@ -134,7 +136,10 @@ impl RequestBuilder {
         }
 
         let _ = std::fs::remove_file(&target_path);
+        self.start_internal(target_path)
+    }
 
+    fn start_internal(self, target_path: PathBuf) -> Result<RequestHandle, StartError> {
         // URL preflight: fail early with a message useful to callers.
         let url = url_parser::Url::new(&self.url).map_err(|e| StartError::Url(e.to_string()))?;
 

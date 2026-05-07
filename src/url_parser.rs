@@ -152,7 +152,10 @@ fn parse_url_builtin(input: &str) -> Result<Url, String> {
 }
 
 fn strip_userinfo(authority: &str) -> &str {
-    authority.rsplit_once('@').map(|(_, h)| h).unwrap_or(authority)
+    authority
+        .rsplit_once('@')
+        .map(|(_, h)| h)
+        .unwrap_or(authority)
 }
 
 fn find_authority_path_split(s: &str) -> Result<usize, String> {
@@ -207,11 +210,7 @@ fn parse_host_port(authority: &str) -> Result<(String, Option<u16>), String> {
     }
 
     if let Some((h, p)) = authority.rsplit_once(':') {
-        if !h.is_empty()
-            && !p.is_empty()
-            && p.chars().all(|c| c.is_ascii_digit())
-            && p.len() <= 5
-        {
+        if !h.is_empty() && !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()) && p.len() <= 5 {
             let port: u16 = p.parse().map_err(|_| "invalid port".to_string())?;
             return Ok((h.to_string(), Some(port)));
         }
