@@ -39,7 +39,7 @@ fn httpbin_test_redirect(driver: shell_download::Downloader) {
 }
 
 fn httpbin_test_get_tough_chars(driver: shell_download::Downloader) {
-    let url = r#"https://httpbin.org/anything/foo$%25?!&1%22%27\"#;
+    let url = r#"https://httpbin.org/anything/foo$%25?!&1"'\"#;
     let Some(body) = fetch_httpbin(driver, url.to_string()) else {
         return;
     };
