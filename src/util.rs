@@ -44,6 +44,50 @@ pub(crate) fn spawn_child_for_output(
     }
 }
 
+pub(crate) fn find_program_in_path(program: &str) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+
+    let path = std::env::var_os("PATH").unwrap_or_default();
+    let mut exts: Vec<std::ffi::OsString> = Vec::new();
+    if cfg!(windows) {
+        if let Some(pathext) = std::env::var_os("PATHEXT") {
+            exts = pathext
+                .to_string_lossy()
+                .split(';')
+                .filter(|s| !s.is_empty())
+                .map(|s| s.into())
+                .collect();
+        }
+        if exts.is_empty() {
+            exts = vec![".EXE".into(), ".CMD".into(), ".BAT".into()];
+        }
+    }
+
+    for dir in std::env::split_paths(&path) {
+        if dir.as_os_str().is_empty() {
+            continue;
+        }
+        if cfg!(windows) {
+            for ext in &exts {
+                let ext_str = ext.to_string_lossy();
+                let ext_no_dot = ext_str.strip_prefix('.').unwrap_or(&ext_str);
+                let mut p = dir.join(program);
+                p.set_extension(ext_no_dot);
+                if p.is_file() {
+                    out.push(p);
+                }
+            }
+        } else {
+            let p = dir.join(program);
+            if p.is_file() {
+                out.push(p);
+            }
+        }
+    }
+
+    out
+}
+
 pub(crate) fn wait_child_with_output(
     mut child: Child,
     cancel: &Arc<AtomicBool>,

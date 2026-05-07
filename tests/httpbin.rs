@@ -11,11 +11,6 @@ fn fetch_httpbin_redirect_wget() {
 }
 
 #[test]
-fn fetch_httpbin_redirect_pwsh() {
-    fetch_httpbin_redirect(shell_download::Downloader::Pwsh);
-}
-
-#[test]
 fn fetch_httpbin_redirect_powershell() {
     fetch_httpbin_redirect(shell_download::Downloader::PowerShell);
 }

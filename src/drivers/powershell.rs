@@ -2,24 +2,10 @@ use std::process::Command;
 use std::sync::{Arc, atomic::AtomicBool};
 use std::thread::JoinHandle;
 
-use crate::{Quiet, RequestBuilder, Response, ResponseError, StartError, drivers::Driver, util};
-
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct PwshDriver;
+use crate::{RequestBuilder, Response, ResponseError, StartError, drivers::Driver, util};
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct PowerShellDriver;
-
-impl Driver for PwshDriver {
-    fn start(
-        &self,
-        req: RequestBuilder,
-        target_path: std::path::PathBuf,
-        cancel: Arc<AtomicBool>,
-    ) -> Result<JoinHandle<Result<Response, ResponseError>>, StartError> {
-        start_inner(req, target_path, cancel, true)
-    }
-}
 
 impl Driver for PowerShellDriver {
     fn start(
@@ -28,7 +14,7 @@ impl Driver for PowerShellDriver {
         target_path: std::path::PathBuf,
         cancel: Arc<AtomicBool>,
     ) -> Result<JoinHandle<Result<Response, ResponseError>>, StartError> {
-        start_inner(req, target_path, cancel, false)
+        start_inner(req, target_path, cancel)
     }
 }
 
@@ -36,9 +22,11 @@ fn start_inner(
     req: RequestBuilder,
     target_path: std::path::PathBuf,
     cancel: Arc<AtomicBool>,
-    use_pwsh: bool,
 ) -> Result<JoinHandle<Result<Response, ResponseError>>, StartError> {
-    let program: &'static str = if use_pwsh { "pwsh" } else { "powershell" };
+    let candidates = find_powershell_candidates();
+    if candidates.is_empty() {
+        return Err(StartError::NoDriverFound);
+    }
 
     let tmp_path = util::tmp_path_for_target(&target_path);
 
@@ -51,24 +39,18 @@ fn start_inner(
     let out_str = escape_ps(&tmp_path.to_string_lossy());
     let max_redir = if req.follow_redirects { 10 } else { 0 };
 
-    let debug = match req.quiet {
-        Quiet::Never => "",
-        Quiet::Always | Quiet::OnSuccess => {
-            "[Console]::Error.WriteLine(\"shell-download(powershell): starting request\");\
-             [Console]::Error.WriteLine(\"  uri={0}\" -f $u);\
-             [Console]::Error.WriteLine(\"  out={0}\" -f $o);\
-             [Console]::Error.WriteLine(\"  max_redir={0}\" -f $mr);\
-             [Console]::Error.WriteLine(\"  ps={0}\" -f $PSVersionTable.PSVersion);"
-        }
-    };
-
-    let script = format!(
-        "$ProgressPreference='SilentlyContinue';\
+    let script = |use_basic_parsing: bool| {
+        let basic = if use_basic_parsing {
+            "-UseBasicParsing"
+        } else {
+            ""
+        };
+        format!(
+            "$ProgressPreference='SilentlyContinue';\
          $h={headers_expr};\
          $u='{url}';\
          $o='{out_str}';\
          $mr={max_redir};\
-         {debug}\
          try {{\
            $r=Invoke-WebRequest -Uri $u -Headers $h -OutFile $o -PassThru -MaximumRedirection $mr -ErrorAction Stop {basic};\
            $sc=$r.StatusCode;\
@@ -80,18 +62,56 @@ fn start_inner(
            [Console]::Error.WriteLine($_.ToString());\
            exit 1;\
          }}",
-        basic = if use_pwsh { "" } else { "-UseBasicParsing" }
-    );
+            basic = basic
+        )
+    };
 
-    let mut cmd = Command::new(program);
-    cmd.arg("-NoProfile")
-        .arg("-NonInteractive")
-        .arg("-ExecutionPolicy")
-        .arg("Bypass")
-        .arg("-Command")
-        .arg(script);
+    let mut last_io: Option<std::io::Error> = None;
+    let mut saw_not_found = false;
 
-    let child = util::spawn_child_for_output(cmd, program)?;
+    // Try pwsh first, then powershell; if the first fails to spawn for some reason,
+    // try the next executable.
+    let (child, program_label) = {
+        let mut started: Option<(std::process::Child, &'static str)> = None;
+        for c in candidates {
+            let (exe, use_basic_parsing) = c;
+            let mut cmd = Command::new(exe);
+            cmd.arg("-NoProfile")
+                .arg("-NonInteractive")
+                .arg("-ExecutionPolicy")
+                .arg("Bypass")
+                .arg("-Command")
+                .arg(script(use_basic_parsing));
+
+            match util::spawn_child_for_output(cmd, exe) {
+                Ok(ch) => {
+                    started = Some((ch, exe));
+                    break;
+                }
+                Err(StartError::NoDriverFound) => {
+                    saw_not_found = true;
+                    continue;
+                }
+                Err(StartError::IoError(e)) => {
+                    if last_io.is_none() {
+                        last_io = Some(e);
+                    }
+                    continue;
+                }
+                Err(StartError::Url(msg)) => return Err(StartError::Url(msg)),
+            };
+        }
+
+        if let Some(v) = started {
+            v
+        } else if let Some(e) = last_io {
+            return Err(StartError::IoError(e));
+        } else if saw_not_found {
+            return Err(StartError::NoDriverFound);
+        } else {
+            return Err(StartError::NoDriverFound);
+        }
+    };
 
     Ok(util::spawn_request_thread(
         req,
@@ -99,7 +119,7 @@ fn start_inner(
         tmp_path,
         cancel,
         move |req, _out, cancel| {
-            let output = util::wait_child_with_output(child, cancel, program, req.quiet)?;
+            let output = util::wait_child_with_output(child, cancel, program_label, req.quiet)?;
             let code_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
             let code: u16 = code_str
                 .parse()
@@ -111,4 +131,18 @@ fn start_inner(
 
 fn escape_ps(s: &str) -> String {
     s.replace('\'', "''")
+}
+
+// Returns ordered (exe, use_basic_parsing) candidates.
+fn find_powershell_candidates() -> Vec<(&'static str, bool)> {
+    // Prefer pwsh if present.
+    let mut out = Vec::new();
+    if !util::find_program_in_path("pwsh").is_empty() {
+        out.push(("pwsh", false));
+    }
+    if !util::find_program_in_path("powershell").is_empty() {
+        // Windows PowerShell needs -UseBasicParsing for older versions.
+        out.push(("powershell", true));
+    }
+    out
 }

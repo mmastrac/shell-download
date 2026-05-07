@@ -15,7 +15,6 @@ pub enum Downloader {
     Curl,
     Wget,
     PowerShell,
-    Pwsh,
     OpenSsl,
 }
 
@@ -126,7 +125,6 @@ impl Downloader {
     pub(crate) fn driver(self) -> &'static dyn drivers::Driver {
         static CURL: drivers::curl::CurlDriver = drivers::curl::CurlDriver;
         static WGET: drivers::wget::WgetDriver = drivers::wget::WgetDriver;
-        static PWSH: drivers::powershell::PwshDriver = drivers::powershell::PwshDriver;
         static POWERSHELL: drivers::powershell::PowerShellDriver =
             drivers::powershell::PowerShellDriver;
         static OPENSSL: drivers::openssl::OpenSslDriver = drivers::openssl::OpenSslDriver;
@@ -134,7 +132,6 @@ impl Downloader {
         match self {
             Downloader::Curl => &CURL,
             Downloader::Wget => &WGET,
-            Downloader::Pwsh => &PWSH,
             Downloader::PowerShell => &POWERSHELL,
             Downloader::OpenSsl => &OPENSSL,
         }
@@ -211,7 +208,6 @@ fn candidate_downloaders(preferred: &[Downloader]) -> Vec<Downloader> {
     vec![
         Downloader::Curl,
         Downloader::Wget,
-        Downloader::Pwsh,
         Downloader::PowerShell,
         Downloader::OpenSsl,
     ]

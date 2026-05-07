@@ -36,11 +36,6 @@ fn localhost_python_wget() {
 }
 
 #[test]
-fn localhost_python_pwsh() {
-    hit_localhost(shell_download::Downloader::Pwsh);
-}
-
-#[test]
 fn localhost_python_powershell() {
     hit_localhost(shell_download::Downloader::PowerShell);
 }
