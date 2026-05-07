@@ -1,11 +1,8 @@
 use std::path::Path;
 use std::process::Command;
-use std::sync::{
-    atomic::AtomicBool,
-    Arc,
-};
+use std::sync::{Arc, atomic::AtomicBool};
 
-use crate::{drivers::Driver, util, Error, RequestBuilder};
+use crate::{Error, RequestBuilder, drivers::Driver, util};
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct FetchDriver;
@@ -24,4 +21,3 @@ impl Driver for FetchDriver {
         Ok((200, false))
     }
 }
-

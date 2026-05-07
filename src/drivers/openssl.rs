@@ -3,11 +3,11 @@ use std::net::TcpStream;
 use std::path::Path;
 use std::process::{Command, Stdio};
 use std::sync::{
-    atomic::{AtomicBool, Ordering},
     Arc,
+    atomic::{AtomicBool, Ordering},
 };
 
-use crate::{drivers::Driver, util, Error, RequestBuilder};
+use crate::{Error, RequestBuilder, drivers::Driver, util};
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct OpenSslDriver;
@@ -20,7 +20,11 @@ impl Driver for OpenSslDriver {
         cancel: &Arc<AtomicBool>,
     ) -> Result<(u16, bool), Error> {
         let mut current_url = req.url.clone();
-        let mut redirects_left = if req.follow_redirects { 10usize } else { 0usize };
+        let mut redirects_left = if req.follow_redirects {
+            10usize
+        } else {
+            0usize
+        };
 
         loop {
             let url = ParsedUrl::parse(&current_url)?;
@@ -145,13 +149,19 @@ fn get_https_via_openssl(
     let mut child = cmd.spawn().map_err(Error::Io)?;
     {
         let mut stdin = child.stdin.take().ok_or_else(|| {
-            Error::Io(io::Error::new(io::ErrorKind::Other, "missing openssl stdin"))
+            Error::Io(io::Error::new(
+                io::ErrorKind::Other,
+                "missing openssl stdin",
+            ))
         })?;
         stdin.write_all(request.as_bytes())?;
     }
 
     let mut stdout = child.stdout.take().ok_or_else(|| {
-        Error::Io(io::Error::new(io::ErrorKind::Other, "missing openssl stdout"))
+        Error::Io(io::Error::new(
+            io::ErrorKind::Other,
+            "missing openssl stdout",
+        ))
     })?;
 
     let mut buf = Vec::new();
@@ -230,9 +240,7 @@ fn parse_http_response_from_openssl_output(
 }
 
 fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
-    haystack
-        .windows(needle.len())
-        .position(|w| w == needle)
+    haystack.windows(needle.len()).position(|w| w == needle)
 }
 
 fn header_value<'a>(headers: &'a [(String, String)], key: &str) -> Option<&'a str> {
@@ -286,7 +294,10 @@ impl ParsedUrl {
 
         let (host, port) = if let Some((h, p)) = hostport.rsplit_once(':') {
             if p.chars().all(|c| c.is_ascii_digit()) {
-                (h.to_string(), Some(p.parse::<u16>().map_err(|_| Error::InvalidUrl)?))
+                (
+                    h.to_string(),
+                    Some(p.parse::<u16>().map_err(|_| Error::InvalidUrl)?),
+                )
             } else {
                 (hostport.to_string(), None)
             }
@@ -302,4 +313,3 @@ impl ParsedUrl {
         })
     }
 }
-

@@ -1,11 +1,8 @@
 use std::path::Path;
 use std::process::Command;
-use std::sync::{
-    atomic::AtomicBool,
-    Arc,
-};
+use std::sync::{Arc, atomic::AtomicBool};
 
-use crate::{drivers::Driver, util, Error, RequestBuilder};
+use crate::{Error, RequestBuilder, drivers::Driver, util};
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct WgetDriver;
@@ -18,7 +15,10 @@ impl Driver for WgetDriver {
         cancel: &Arc<AtomicBool>,
     ) -> Result<(u16, bool), Error> {
         let mut cmd = Command::new("wget");
-        cmd.arg("-O").arg(out).arg("--server-response").arg(&req.url);
+        cmd.arg("-O")
+            .arg(out)
+            .arg("--server-response")
+            .arg(&req.url);
         if !req.follow_redirects {
             cmd.arg("--max-redirect=0");
         }
@@ -43,4 +43,3 @@ impl Driver for WgetDriver {
         Ok((last_code.unwrap_or(200), false))
     }
 }
-

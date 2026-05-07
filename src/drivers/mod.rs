@@ -1,8 +1,5 @@
 use std::path::Path;
-use std::sync::{
-    atomic::AtomicBool,
-    Arc,
-};
+use std::sync::{Arc, atomic::AtomicBool};
 
 use crate::{Error, RequestBuilder};
 
@@ -20,4 +17,3 @@ pub(crate) mod fetch;
 pub(crate) mod openssl;
 pub(crate) mod powershell;
 pub(crate) mod wget;
-

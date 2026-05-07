@@ -41,15 +41,35 @@ fn fetch_httpbin_redirect(driver: shell_download::Downloader) {
 
     let handle = match handle {
         Ok(h) => h,
-        Err(shell_download::Error::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => return, // skip: tool not installed
-        Err(shell_download::Error::NoDownloader) => return, // skip: no tools on PATH
+        Err(shell_download::Error::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => {
+            if is_ci() {
+                panic!("required tool for {driver:?} not found: {e}");
+            }
+            return;
+        }
+        Err(shell_download::Error::NoDownloader) => {
+            if is_ci() {
+                panic!("no downloader available in CI");
+            }
+            return;
+        }
         Err(e) => panic!("start failed: {e:?}"),
     };
 
     let resp = match handle.join() {
         Ok(r) => r,
-        Err(shell_download::Error::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => return, // skip: tool not installed
-        Err(shell_download::Error::NoDownloader) => return, // skip: no tools on PATH
+        Err(shell_download::Error::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => {
+            if is_ci() {
+                panic!("required tool for {driver:?} not found: {e}");
+            }
+            return;
+        }
+        Err(shell_download::Error::NoDownloader) => {
+            if is_ci() {
+                panic!("no downloader available in CI");
+            }
+            return;
+        }
         Err(e) => panic!("download failed: {e:?}"),
     };
 
@@ -71,6 +91,10 @@ fn fetch_httpbin_redirect(driver: shell_download::Downloader) {
     let _ = std::fs::remove_file(&out);
 }
 
+fn is_ci() -> bool {
+    matches!(std::env::var("CI"), Ok(v) if !v.trim().is_empty() && v != "0" && v.to_lowercase() != "false")
+}
+
 fn unique_name(prefix: &str) -> PathBuf {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -78,4 +102,3 @@ fn unique_name(prefix: &str) -> PathBuf {
         .as_millis();
     PathBuf::from(format!("{prefix}-{}-{}.txt", std::process::id(), now))
 }
-

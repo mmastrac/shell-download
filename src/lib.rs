@@ -4,8 +4,8 @@ mod util;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::{
-    atomic::{AtomicBool, Ordering},
     Arc,
+    atomic::{AtomicBool, Ordering},
 };
 use std::thread::{self, JoinHandle};
 
@@ -33,7 +33,7 @@ pub enum Quiet {
 pub struct RequestBuilder {
     pub(crate) url: String,
     pub(crate) headers: Vec<(String, String)>,
-    pub(crate) preferred: Option<Downloader>,
+    pub(crate) preferred: Vec<Downloader>,
     pub(crate) follow_redirects: bool,
     pub(crate) quiet: Quiet,
 }
@@ -43,7 +43,7 @@ impl RequestBuilder {
         Self {
             url: url.into(),
             headers: Vec::new(),
-            preferred: None,
+            preferred: Vec::new(),
             follow_redirects: true,
             quiet: Quiet::Always,
         }
@@ -55,7 +55,7 @@ impl RequestBuilder {
     }
 
     pub fn preferred_downloader(mut self, preferred: Downloader) -> Self {
-        self.preferred = Some(preferred);
+        self.preferred.push(preferred);
         self
     }
 
@@ -97,7 +97,8 @@ impl Downloader {
         static CURL: drivers::curl::CurlDriver = drivers::curl::CurlDriver;
         static WGET: drivers::wget::WgetDriver = drivers::wget::WgetDriver;
         static PWSH: drivers::powershell::PwshDriver = drivers::powershell::PwshDriver;
-        static POWERSHELL: drivers::powershell::PowerShellDriver = drivers::powershell::PowerShellDriver;
+        static POWERSHELL: drivers::powershell::PowerShellDriver =
+            drivers::powershell::PowerShellDriver;
         static FETCH: drivers::fetch::FetchDriver = drivers::fetch::FetchDriver;
         static OPENSSL: drivers::openssl::OpenSslDriver = drivers::openssl::OpenSslDriver;
 
@@ -167,7 +168,7 @@ fn run_request(
     target_path: PathBuf,
     cancel: Arc<AtomicBool>,
 ) -> Result<Response, Error> {
-    let downloader = pick_downloader(req.preferred)?;
+    let downloader = pick_downloader(&req.preferred)?;
     let driver = downloader.driver();
 
     let mut tmp = target_path.clone();
@@ -196,11 +197,14 @@ fn run_request(
     Ok(Response { status_code })
 }
 
-fn pick_downloader(preferred: Option<Downloader>) -> Result<Downloader, Error> {
-    if let Some(p) = preferred {
-        // Preferred downloader is intended for deterministic behavior (e.g. tests).
-        // If it's not available, the request should fail rather than silently falling back.
-        return Ok(p);
+fn pick_downloader(preferred: &[Downloader]) -> Result<Downloader, Error> {
+    if !preferred.is_empty() {
+        for &d in preferred {
+            if downloader_available(d) {
+                return Ok(d);
+            }
+        }
+        return Err(Error::NoDownloader);
     }
 
     for d in [

@@ -2,8 +2,8 @@ use std::io::{self, Read as _, Write as _};
 use std::path::Path;
 use std::process::{Command, Stdio};
 use std::sync::{
-    atomic::{AtomicBool, Ordering},
     Arc,
+    atomic::{AtomicBool, Ordering},
 };
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -11,13 +11,19 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use crate::{Error, Quiet, RequestBuilder};
 
 pub(crate) fn unique_suffix() -> Option<String> {
-    let now = SystemTime::now().duration_since(UNIX_EPOCH).ok()?.as_millis();
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .ok()?
+        .as_millis();
     Some(format!("{}-{}", std::process::id(), now))
 }
 
 pub(crate) fn add_common_headers(req: &RequestBuilder) -> Vec<(String, String)> {
     let mut headers = req.headers.clone();
-    if !headers.iter().any(|(k, _)| k.eq_ignore_ascii_case("accept-encoding")) {
+    if !headers
+        .iter()
+        .any(|(k, _)| k.eq_ignore_ascii_case("accept-encoding"))
+    {
         headers.push(("Accept-Encoding".into(), "gzip".into()));
     }
     headers
@@ -66,7 +72,9 @@ pub(crate) fn run_cancellable_command(
     program: &'static str,
     quiet: Quiet,
 ) -> Result<std::process::Output, Error> {
-    cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+    cmd.stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
     let mut child = cmd.spawn().map_err(Error::Io)?;
 
     loop {
@@ -115,7 +123,10 @@ pub(crate) fn file_looks_gzipped(path: &Path) -> io::Result<bool> {
 
 pub(crate) fn gunzip_to_target(src: &Path, dst: &Path) -> Result<(), Error> {
     let mut cmd = Command::new("gzip");
-    cmd.arg("-dc").arg(src).stdout(Stdio::piped()).stderr(Stdio::piped());
+    cmd.arg("-dc")
+        .arg(src)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
     let mut child = cmd.spawn().map_err(Error::Io)?;
 
     let mut out_file = std::fs::File::create(dst)?;
@@ -137,4 +148,3 @@ pub(crate) fn gunzip_to_target(src: &Path, dst: &Path) -> Result<(), Error> {
 
     Ok(())
 }
-
