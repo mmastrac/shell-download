@@ -80,13 +80,11 @@ mod simple {
             {
                 use std::os::windows::fs::OpenOptionsExt as _;
 
-                // `Invoke-WebRequest -OutFile` (and similar) may open the path with
-                // create/replace semantics that require delete-sharing while our handle
-                // is still open; omitting `FILE_SHARE_DELETE` causes ERROR_SHARING_VIOLATION.
+                // Allow another handle (e.g. PowerShell `FileStream` on the same path) to open
+                // for read/write while we hold the creating handle — see `powershell` driver.
                 const FILE_SHARE_READ: u32 = 0x00000001;
                 const FILE_SHARE_WRITE: u32 = 0x00000002;
-                const FILE_SHARE_DELETE: u32 = 0x00000004;
-                opts.share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE);
+                opts.share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE);
             }
 
             #[cfg(unix)]
@@ -189,13 +187,12 @@ mod tf {
 
             const FILE_SHARE_READ: u32 = 0x00000001;
             const FILE_SHARE_WRITE: u32 = 0x00000002;
-            const FILE_SHARE_DELETE: u32 = 0x00000004;
 
             let ntf = tempfile::Builder::new().make_in(dir, |path| {
                 OpenOptions::new()
                     .write(true)
                     .create_new(true)
-                    .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
+                    .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
                     .open(path)
             })?;
             Ok(TmpFile { inner: Some(ntf) })
