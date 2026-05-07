@@ -74,6 +74,30 @@ impl RequestBuilder {
         self
     }
 
+    /// Fetch the response body as a String, blocking until the download is
+    /// complete.
+    #[cfg(feature = "in-memory")]
+    pub fn fetch_string(self) -> Result<String, ResponseError> {
+        let tmp_file = tempfile::NamedTempFile::new()?;
+        let handle = self
+            .start(tmp_file.path())
+            .map_err(ResponseError::Start)?;
+        let _res = handle.join()?;
+        std::fs::read_to_string(tmp_file.path()).map_err(ResponseError::Io)
+    }
+
+    /// Fetch the response body as a String, blocking until the download is
+    /// complete.
+    #[cfg(feature = "in-memory")]
+    pub fn fetch_bytes(self) -> Result<Vec<u8>, ResponseError> {
+        let tmp_file = tempfile::NamedTempFile::new()?;
+        let handle = self
+            .start(tmp_file.path())
+            .map_err(ResponseError::Start)?;
+        let _res = handle.join()?;
+        std::fs::read(tmp_file.path()).map_err(ResponseError::Io)
+    }
+
     pub fn start(self, target_path: impl AsRef<Path>) -> Result<RequestHandle, StartError> {
         let target_path = target_path.as_ref().to_path_buf();
 

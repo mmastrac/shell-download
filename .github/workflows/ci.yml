@@ -68,3 +68,6 @@ jobs:
         shell: bash
         run: cargo test
 
+      - name: Run tests (all features)
+        shell: bash
+        run: cargo test --all-features

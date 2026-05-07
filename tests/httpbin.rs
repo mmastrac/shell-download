@@ -23,6 +23,8 @@ fn fetch_httpbin_redirect_openssl() {
 fn httpbin_test(driver: shell_download::Downloader) {
     httpbin_test_redirect(driver);
     httpbin_test_get_tough_chars(driver);
+    httpbin_test_redirect_follow_off(driver);
+    httpbin_test_custom_status(driver);
 }
 
 fn httpbin_test_redirect(driver: shell_download::Downloader) {
@@ -52,12 +54,38 @@ fn httpbin_test_get_tough_chars(driver: shell_download::Downloader) {
 }
 
 fn fetch_httpbin(driver: shell_download::Downloader, url: String) -> Option<String> {
+    fetch_httpbin_with(driver, url, true, |status| status >= 200 && status < 400)
+}
+
+fn fetch_httpbin_with(
+    driver: shell_download::Downloader,
+    url: String,
+    follow_redirects: bool,
+    ok_status: impl FnOnce(u16) -> bool,
+) -> Option<String> {
+    let (body, status_code) = fetch_httpbin_raw(driver, url, follow_redirects)?;
+
+    assert!(
+        ok_status(status_code),
+        "unexpected status code: {}",
+        status_code
+    );
+
+    Some(body)
+}
+
+fn fetch_httpbin_raw(
+    driver: shell_download::Downloader,
+    url: String,
+    follow_redirects: bool,
+) -> Option<(String, u16)> {
     let mut out = std::env::temp_dir();
     out.push(unique_name(&format!("shell-download-httpbin-{driver:?}")));
 
     let handle = shell_download::RequestBuilder::new(url)
         .quiet(shell_download::Quiet::Never)
         .preferred_downloader(driver)
+        .follow_redirects(follow_redirects)
         .start(&out);
 
     let handle = match handle {
@@ -71,17 +99,87 @@ fn fetch_httpbin(driver: shell_download::Downloader, url: String) -> Option<Stri
         Err(err) => panic!("failed to start: {err:?}"),
     };
 
-    let resp = handle.join().expect("download failed");
+    let resp = match handle.join() {
+        Ok(r) => r,
+        Err(e) => {
+            let _ = std::fs::remove_file(&out);
+            panic!("download failed: {e:?}");
+        }
+    };
+
+    let body = std::fs::read_to_string(&out).unwrap_or_default();
+    let _ = std::fs::remove_file(&out);
+    Some((body, resp.status_code))
+}
+
+fn httpbin_test_redirect_follow_off(driver: shell_download::Downloader) {
+    let url = "https://httpbin.org/redirect/5";
+    let mut out = std::env::temp_dir();
+    out.push(unique_name(&format!(
+        "shell-download-httpbin-follow-off-{driver:?}"
+    )));
+
+    let handle = shell_download::RequestBuilder::new(url.to_string())
+        .quiet(shell_download::Quiet::Never)
+        .preferred_downloader(driver)
+        .follow_redirects(false)
+        .start(&out);
+
+    let handle = match handle {
+        Ok(h) => h,
+        Err(shell_download::StartError::NoDriverFound) => {
+            if is_ci() {
+                panic!("failed to start downloader in CI");
+            }
+            return;
+        }
+        Err(err) => panic!("failed to start: {err:?}"),
+    };
+
+    match handle.join() {
+        Ok(resp) => {
+            assert!(
+                resp.status_code >= 300 && resp.status_code < 400,
+                "expected 3xx when redirects are disabled; got {}",
+                resp.status_code
+            );
+
+            let body = std::fs::read_to_string(&out).unwrap_or_default();
+            let _ = std::fs::remove_file(&out);
+            assert!(
+                !body.contains("\"url\": \"https://httpbin.org/get\""),
+                "expected not to follow redirects; got body prefix: {:?}",
+                body.chars().take(250).collect::<String>()
+            );
+        }
+        Err(shell_download::ResponseError::CommandFailed { program, stderr, .. }) => {
+            let _ = std::fs::remove_file(&out);
+            // `wget` and PowerShell treat "redirects disabled / max redirects exceeded" as an error exit.
+            assert!(
+                stderr.to_ascii_lowercase().contains("redirection")
+                    || stderr.to_ascii_lowercase().contains("redirecting"),
+                "expected a redirect-related failure when redirects are disabled; program={program} stderr={stderr:?}"
+            );
+        }
+        Err(e) => {
+            let _ = std::fs::remove_file(&out);
+            panic!("unexpected error: {e:?}");
+        }
+    }
+}
+
+fn httpbin_test_custom_status(driver: shell_download::Downloader) {
+    // Use a custom status endpoint that most tools treat as successful (no 4xx/5xx error exit).
+    let url = "https://httpbin.org/status/204";
+    let Some(body) = fetch_httpbin_with(driver, url.to_string(), true, |s| s == 204) else {
+        return;
+    };
 
     assert!(
-        resp.status_code >= 200 && resp.status_code < 400,
-        "unexpected status code: {}",
-        resp.status_code
+        body.trim().is_empty(),
+        "expected empty body for 204; got prefix: {:?}",
+        body.chars().take(250).collect::<String>()
     );
-
-    let body = std::fs::read_to_string(&out).expect("read output file");
-    std::fs::remove_file(&out).expect("remove output file");
-    Some(body)
 }
 
 fn is_ci() -> bool {
