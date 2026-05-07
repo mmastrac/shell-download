@@ -8,7 +8,7 @@ use std::sync::{
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use crate::{Error, RequestBuilder};
+use crate::{Error, Quiet, RequestBuilder};
 
 pub(crate) fn unique_suffix() -> Option<String> {
     let now = SystemTime::now().duration_since(UNIX_EPOCH).ok()?.as_millis();
@@ -64,7 +64,7 @@ pub(crate) fn run_cancellable_command(
     mut cmd: Command,
     cancel: &Arc<AtomicBool>,
     program: &'static str,
-    quiet: bool,
+    quiet: Quiet,
 ) -> Result<std::process::Output, Error> {
     cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
     let mut child = cmd.spawn().map_err(Error::Io)?;
@@ -86,7 +86,12 @@ pub(crate) fn run_cancellable_command(
     let output = child.wait_with_output().map_err(Error::Io)?;
 
     // TODO: This should print "live" output
-    if !quiet {
+    let should_forward = match quiet {
+        Quiet::Always => false,
+        Quiet::Never => true,
+        Quiet::OnSuccess => !output.status.success(),
+    };
+    if should_forward {
         println!("{}", String::from_utf8_lossy(&output.stdout));
         eprintln!("{}", String::from_utf8_lossy(&output.stderr));
     }

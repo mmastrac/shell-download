@@ -5,7 +5,7 @@ use std::sync::{
     Arc,
 };
 
-use crate::{drivers::Driver, util, Error, RequestBuilder};
+use crate::{drivers::Driver, util, Error, Quiet, RequestBuilder};
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct PwshDriver;
@@ -52,17 +52,33 @@ fn download_inner(
     let out_str = escape_ps(&out.to_string_lossy());
     let max_redir = if req.follow_redirects { 10 } else { 0 };
 
+    let debug = match req.quiet {
+        Quiet::Never => "",
+        Quiet::Always | Quiet::OnSuccess => {
+            "[Console]::Error.WriteLine(\"shell-download(powershell): starting request\");\
+             [Console]::Error.WriteLine(\"  uri={0}\" -f $u);\
+             [Console]::Error.WriteLine(\"  out={0}\" -f $o);\
+             [Console]::Error.WriteLine(\"  max_redir={0}\" -f $mr);\
+             [Console]::Error.WriteLine(\"  ps={0}\" -f $PSVersionTable.PSVersion);"
+        }
+    };
+
     let script = format!(
         "$ProgressPreference='SilentlyContinue';\
          $h={headers_expr};\
+         $u='{url}';\
+         $o='{out_str}';\
+         $mr={max_redir};\
+         {debug}\
          try {{\
-           $r=Invoke-WebRequest -Uri '{url}' -Headers $h -OutFile '{out_str}' -MaximumRedirection {max_redir} -ErrorAction Stop {basic};\
+           $r=Invoke-WebRequest -Uri $u -Headers $h -OutFile $o -PassThru -MaximumRedirection $mr -ErrorAction Stop {basic};\
            $sc=$r.StatusCode;\
            if ($null -eq $sc) {{ $sc=0 }};\
            if ($sc -is [int]) {{ [Console]::Out.Write($sc) }} else {{ [Console]::Out.Write($sc.value__) }};\
            exit 0;\
          }} catch {{\
-           Write-Error $_;\
+           [Console]::Error.WriteLine(\"shell-download(powershell): request failed\");\
+           [Console]::Error.WriteLine($_.ToString());\
            exit 1;\
          }}",
         basic = if use_pwsh { "" } else { "-UseBasicParsing" }

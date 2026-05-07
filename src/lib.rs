@@ -19,13 +19,23 @@ pub enum Downloader {
     OpenSsl,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Quiet {
+    /// Never be quiet: always forward child stdout/stderr to the parent process.
+    Never,
+    /// Always be quiet: never forward child stdout/stderr.
+    Always,
+    /// Only be quiet on success: forward output if the command fails.
+    OnSuccess,
+}
+
 #[derive(Debug, Clone)]
 pub struct RequestBuilder {
     pub(crate) url: String,
     pub(crate) headers: Vec<(String, String)>,
     pub(crate) preferred: Option<Downloader>,
     pub(crate) follow_redirects: bool,
-    pub(crate) quiet: bool,
+    pub(crate) quiet: Quiet,
 }
 
 impl RequestBuilder {
@@ -35,7 +45,7 @@ impl RequestBuilder {
             headers: Vec::new(),
             preferred: None,
             follow_redirects: true,
-            quiet: false,
+            quiet: Quiet::Always,
         }
     }
 
@@ -54,7 +64,7 @@ impl RequestBuilder {
         self
     }
 
-    pub fn quiet(mut self, quiet: bool) -> Self {
+    pub fn quiet(mut self, quiet: Quiet) -> Self {
         self.quiet = quiet;
         self
     }
