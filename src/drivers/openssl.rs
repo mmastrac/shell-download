@@ -12,6 +12,8 @@ use crate::{
     url_parser::Url, util,
 };
 
+type HttpResponseParts = (u16, Vec<(String, String)>, Vec<u8>);
+
 #[derive(Debug, Clone, Copy)]
 /// OpenSSL/TCP backend (minimal HTTP client).
 pub(crate) struct OpenSslDriver;
@@ -50,7 +52,7 @@ impl Driver for OpenSslDriver {
             req,
             out_path,
             cancel,
-            move |req, out, cancel| download_inner(req, out, cancel),
+            download_inner,
         ))
     }
 }
@@ -114,7 +116,7 @@ fn get_http_via_tcp(
     url: &Url,
     req: &RequestBuilder,
     cancel: &Arc<AtomicBool>,
-) -> Result<(u16, Vec<(String, String)>, Vec<u8>), ResponseError> {
+) -> Result<HttpResponseParts, ResponseError> {
     let host = &url.host;
     let port = url.port.unwrap_or(80);
     let path = url.path_and_query();
@@ -158,7 +160,7 @@ fn get_https_via_openssl(
     url: &Url,
     req: &RequestBuilder,
     cancel: &Arc<AtomicBool>,
-) -> Result<(u16, Vec<(String, String)>, Vec<u8>), ResponseError> {
+) -> Result<HttpResponseParts, ResponseError> {
     let host = url.host.clone();
     let port = url.port.unwrap_or(443);
     let path = url.path_and_query();
@@ -186,21 +188,17 @@ fn get_https_via_openssl(
 
     let mut child = cmd.spawn().map_err(ResponseError::Io)?;
     {
-        let mut stdin = child.stdin.take().ok_or_else(|| {
-            ResponseError::Io(io::Error::new(
-                io::ErrorKind::Other,
-                "missing openssl stdin",
-            ))
-        })?;
+        let mut stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| ResponseError::Io(io::Error::other("missing openssl stdin")))?;
         stdin.write_all(request.as_bytes())?;
     }
 
-    let mut stdout = child.stdout.take().ok_or_else(|| {
-        ResponseError::Io(io::Error::new(
-            io::ErrorKind::Other,
-            "missing openssl stdout",
-        ))
-    })?;
+    let mut stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| ResponseError::Io(io::Error::other("missing openssl stdout")))?;
 
     let mut buf = Vec::new();
     loop {
@@ -247,9 +245,7 @@ fn resolve_location(current_url: &str, location: &str) -> String {
 }
 
 /// Parse a raw HTTP response, discarding any `openssl` prelude.
-fn parse_http_response_from_openssl_output(
-    all: &[u8],
-) -> Result<(u16, Vec<(String, String)>, Vec<u8>), ResponseError> {
+fn parse_http_response_from_openssl_output(all: &[u8]) -> Result<HttpResponseParts, ResponseError> {
     let needle = b"HTTP/";
     let start = all
         .windows(needle.len())

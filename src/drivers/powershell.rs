@@ -68,7 +68,6 @@ fn start_inner(
     };
 
     let mut last_io: Option<std::io::Error> = None;
-    let mut saw_not_found = false;
 
     // Try pwsh first, then powershell; if the first fails to spawn for some reason,
     // try the next executable.
@@ -90,7 +89,6 @@ fn start_inner(
                     break;
                 }
                 Err(StartError::NoDriverFound) => {
-                    saw_not_found = true;
                     continue;
                 }
                 Err(StartError::IoError(e)) => {
@@ -107,8 +105,6 @@ fn start_inner(
             v
         } else if let Some(e) = last_io {
             return Err(StartError::IoError(e));
-        } else if saw_not_found {
-            return Err(StartError::NoDriverFound);
         } else {
             return Err(StartError::NoDriverFound);
         }
