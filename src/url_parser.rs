@@ -102,6 +102,7 @@ fn parse_url_crate(input: &str) -> Result<Url, String> {
 }
 
 /// Built-in parser (always compiled; used by [`Url::new`] unless the `url` feature is on).
+#[allow(dead_code)]
 fn parse_url_builtin(input: &str) -> Result<Url, String> {
     // scheme://[userinfo@]host[:port]/path?query#fragment
     let input = input.trim();
