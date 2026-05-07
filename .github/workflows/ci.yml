@@ -57,7 +57,7 @@ jobs:
         if: ${{ runner.os == 'Windows' }}
         shell: bash
         run: |
-          choco install -y wget
+          choco install -y wget > /dev/null || echo "choco failed"
           wget --version
 
       - name: Install pwsh (Linux)
@@ -69,9 +69,9 @@ jobs:
           sudo apt-get install -y powershell
           command -v pwsh >/dev/null 2>&1 && pwsh -NoProfile -NonInteractive -Command '$PSVersionTable.PSVersion'
 
-      # Gunicorn does not support native Windows; run httpbin under Waitress instead of Docker.
-      - name: Set up Python (httpbin on Windows)
-        if: ${{ runner.os == 'Windows' }}
+      # Docker httpbin is only practical on Linux GitHub runners; use Waitress elsewhere.
+      - name: Set up Python (httpbin on Windows or macOS)
+        if: ${{ runner.os == 'Windows' || runner.os == 'macOS' }}
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -99,8 +99,27 @@ jobs:
           }
           throw "httpbin did not become ready in time (waitress pid=$($proc.Id))"
 
+      - name: Start httpbin (Waitress, macOS)
+        if: ${{ runner.os == 'macOS' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install -U pip
+          python -m pip install httpbin waitress
+          PORT=8080
+          python -m waitress --listen="127.0.0.1:${PORT}" httpbin:app &
+          echo "SHELL_DOWNLOAD_HTTPBIN=http://127.0.0.1:${PORT}" >> "$GITHUB_ENV"
+          for _ in {1..90}; do
+            if curl -sfS "http://127.0.0.1:${PORT}/get" >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "httpbin did not become ready in time" >&2
+          exit 1
+
       - name: Start httpbin (Docker)
-        if: ${{ runner.os != 'Windows' }}
+        if: ${{ runner.os == 'Linux' }}
         shell: bash
         run: |
           set -euo pipefail
