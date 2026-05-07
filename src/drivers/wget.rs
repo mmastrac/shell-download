@@ -21,6 +21,9 @@ impl Driver for WgetDriver {
         cmd.arg("-O")
             .arg(out_path)
             .arg("--server-response")
+            // Avoid reusing a single TCP connection across redirects; ELBs (e.g. httpbin)
+            // sometimes return 502 on a stale keep-alive after a redirect chain.
+            .arg("--no-http-keep-alive")
             .arg(&req.url);
         if !req.follow_redirects {
             cmd.arg("--max-redirect=0");
