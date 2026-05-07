@@ -24,6 +24,9 @@ impl Driver for WgetDriver {
             .arg(&req.url);
         if !req.follow_redirects {
             cmd.arg("--max-redirect=0");
+        } else {
+            // Some wget builds differ in default redirect behavior; set explicitly.
+            cmd.arg("--max-redirect=10");
         }
         for (k, v) in util::add_common_headers(&req) {
             cmd.arg("--header").arg(format!("{k}: {v}"));
