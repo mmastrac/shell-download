@@ -118,12 +118,12 @@ mod tf {
 
     #[derive(Debug)]
     pub(crate) struct TmpFile {
-        path: Option<tempfile::TempPath>,
+        inner: tempfile::NamedTempFile<File>,
     }
 
     impl AsRef<Path> for TmpFile {
         fn as_ref(&self) -> &Path {
-            self.path.as_deref().expect("tmp path present")
+            self.inner.path()
         }
     }
 
@@ -133,20 +133,36 @@ mod tf {
         dir: &Path,
         _hint: &str,
     ) -> io::Result<TmpFile> {
-        let p = tempfile::NamedTempFile::new_in(dir)?.into_temp_path();
-        Ok(TmpFile { path: Some(p) })
+        #[cfg(windows)]
+        {
+            use std::fs::OpenOptions;
+            use std::os::windows::fs::OpenOptionsExt as _;
+
+            const FILE_SHARE_READ: u32 = 0x00000001;
+            const FILE_SHARE_WRITE: u32 = 0x00000002;
+
+            let ntf = tempfile::Builder::new().make_in(dir, |path| {
+                OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
+                    .open(path)
+            })?;
+            return Ok(TmpFile { inner: ntf });
+        }
+
+        #[cfg(not(windows))]
+        {
+            let ntf = tempfile::NamedTempFile::new_in(dir)?;
+            Ok(TmpFile { inner: ntf })
+        }
     }
 
     impl TmpFile {
         pub(crate) fn persist<P: AsRef<Path>>(self, new_path: P) -> io::Result<File> {
-            let mut this = self;
             let new_path = new_path.as_ref();
             let _ = std::fs::remove_file(new_path);
-            let p = this.path.take().expect("tmp path present");
-            p.persist(new_path).map_err(|e| e.error)?;
-            // Once persisted, we no longer own a path to clean up.
-            this.path = None;
-            File::open(new_path)
+            self.inner.persist(new_path).map_err(Into::into)
         }
     }
 }
@@ -210,14 +226,20 @@ mod tests {
 
             #[cfg(windows)]
             {
-                // cmd.exe quoting: wrap in quotes; `echo` output redirection.
-                let cmd = format!("echo hi > \"{}\"", path.display());
-                let status = Command::new("cmd")
+                // `cmd.exe` quoting is fiddly; wrap the whole command in quotes and avoid spaces around `>`.
+                let cmd = format!("\"echo hi>\\\"{}\\\"\"", path.display());
+                let out = Command::new("cmd")
                     .arg("/C")
                     .arg(cmd)
-                    .status()
+                    .output()
                     .expect("spawn cmd");
-                assert!(status.success(), "cmd command failed");
+                assert!(
+                    out.status.success(),
+                    "cmd command failed: status={:?} stdout={:?} stderr={:?}",
+                    out.status.code(),
+                    String::from_utf8_lossy(&out.stdout),
+                    String::from_utf8_lossy(&out.stderr)
+                );
             }
 
             assert!(path.exists(), "expected temp file to exist after write");
