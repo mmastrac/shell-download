@@ -45,7 +45,7 @@ impl Driver for CurlDriver {
                 let code: u16 = code_str
                     .parse()
                     .map_err(|_| ResponseError::BadStatusCode(code_str))?;
-                Ok((code, false))
+                Ok((code, None))
             },
         ))
     }

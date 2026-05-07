@@ -36,6 +36,13 @@ pub enum Quiet {
     OnSuccess,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Response body content encoding (if known).
+pub enum ContentEncoding {
+    /// Gzip-compressed content.
+    Gzip,
+}
+
 #[derive(Debug, Clone)]
 /// Builder for a single download request.
 pub struct RequestBuilder {
@@ -51,8 +58,8 @@ pub struct RequestBuilder {
 pub struct DownloadResult {
     /// HTTP status code (best-effort).
     pub status_code: u16,
-    /// Whether the server declared gzip encoding.
-    pub content_encoding_gzip: bool,
+    /// Response content encoding, if known.
+    pub content_encoding: Option<ContentEncoding>,
 }
 
 impl RequestBuilder {
@@ -209,7 +216,7 @@ impl RequestHandle {
             Err(_) => Err(ResponseError::ThreadPanicked),
         }?;
 
-        util::finalize_download(&self.tmp_path, &self.target_path, res.content_encoding_gzip)?;
+        util::finalize_download(&self.tmp_path, &self.target_path, res.content_encoding)?;
         Ok(Response {
             status_code: res.status_code,
         })

@@ -8,8 +8,8 @@ use std::sync::{
 };
 
 use crate::{
-    DownloadResult, RequestBuilder, ResponseError, StartError, drivers::Driver, url_parser::Url,
-    util,
+    ContentEncoding, DownloadResult, RequestBuilder, ResponseError, StartError, drivers::Driver,
+    url_parser::Url, util,
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -60,7 +60,7 @@ fn download_inner(
     req: &RequestBuilder,
     out: &Path,
     cancel: &Arc<AtomicBool>,
-) -> Result<(u16, bool), ResponseError> {
+) -> Result<(u16, Option<ContentEncoding>), ResponseError> {
     let mut current_url = req.url.clone();
     let mut redirects_left = if req.follow_redirects {
         10usize
@@ -84,9 +84,10 @@ fn download_inner(
             }
         }
 
-        let content_encoding_gzip = header_value(&headers, "content-encoding")
+        let content_encoding = header_value(&headers, "content-encoding")
             .map(|v| v.to_ascii_lowercase().contains("gzip"))
-            .unwrap_or(false);
+            .unwrap_or(false)
+            .then_some(ContentEncoding::Gzip);
 
         let body = if header_value(&headers, "transfer-encoding")
             .map(|v| v.to_ascii_lowercase().contains("chunked"))
@@ -104,7 +105,7 @@ fn download_inner(
         };
 
         std::fs::write(out, &body).map_err(ResponseError::Io)?;
-        return Ok((status_code, content_encoding_gzip));
+        return Ok((status_code, content_encoding));
     }
 }
 

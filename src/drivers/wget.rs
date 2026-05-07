@@ -49,7 +49,7 @@ impl Driver for WgetDriver {
                         }
                     }
                 }
-                Ok((last_code.unwrap_or(200), false))
+                Ok((last_code.unwrap_or(200), None))
             },
         ))
     }

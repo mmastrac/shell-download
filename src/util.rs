@@ -9,7 +9,7 @@ use std::thread;
 use std::thread::JoinHandle;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use crate::{DownloadResult, Quiet, RequestBuilder, ResponseError, StartError};
+use crate::{ContentEncoding, DownloadResult, Quiet, RequestBuilder, ResponseError, StartError};
 
 /// Create a process-unique suffix for temporary files.
 pub(crate) fn unique_suffix() -> Option<String> {
@@ -148,10 +148,14 @@ pub(crate) fn spawn_download_thread<F>(
 where
     F: Send
         + 'static
-        + FnOnce(&RequestBuilder, &Path, &Arc<AtomicBool>) -> Result<(u16, bool), ResponseError>,
+        + FnOnce(
+            &RequestBuilder,
+            &Path,
+            &Arc<AtomicBool>,
+        ) -> Result<(u16, Option<ContentEncoding>), ResponseError>,
 {
     thread::spawn(move || {
-        let (status_code, content_encoding_gzip) = download_to_tmp(&req, &out_path, &cancel)?;
+        let (status_code, content_encoding) = download_to_tmp(&req, &out_path, &cancel)?;
 
         if cancel.load(Ordering::SeqCst) {
             let _ = std::fs::remove_file(&out_path);
@@ -160,7 +164,7 @@ where
 
         Ok(DownloadResult {
             status_code,
-            content_encoding_gzip,
+            content_encoding,
         })
     })
 }
@@ -179,9 +183,10 @@ pub(crate) fn tmp_path_for_target(target_path: &Path) -> PathBuf {
 pub(crate) fn finalize_download(
     tmp_path: &Path,
     target_path: &Path,
-    content_encoding_gzip: bool,
+    content_encoding: Option<ContentEncoding>,
 ) -> Result<(), ResponseError> {
-    let needs_gunzip = content_encoding_gzip || file_looks_gzipped(tmp_path).unwrap_or(false);
+    let declared_gzip = matches!(content_encoding, Some(ContentEncoding::Gzip));
+    let needs_gunzip = declared_gzip || file_looks_gzipped(tmp_path).unwrap_or(false);
     if needs_gunzip {
         gunzip_to_target(tmp_path, target_path)?;
         let _ = std::fs::remove_file(tmp_path);
