@@ -19,7 +19,7 @@ impl Driver for WgetDriver {
     ) -> Result<JoinHandle<Result<DownloadResult, ResponseError>>, StartError> {
         let mut cmd = Command::new("wget");
         cmd.arg("-O")
-            .arg(out_path)
+            .arg("-")
             .arg("--server-response")
             // Avoid reusing a single TCP connection across redirects; ELBs (e.g. httpbin)
             // sometimes return 502 on a stale keep-alive after a redirect chain.
@@ -41,8 +41,9 @@ impl Driver for WgetDriver {
             req,
             out_path,
             cancel,
-            move |req, _out, cancel| {
-                let output = util::wait_child_with_output(child, cancel, "wget", req.quiet)?;
+            move |req, out, cancel| {
+                let output =
+                    util::wait_child_stream_stdout_to_file(child, out, cancel, "wget", req.quiet)?;
                 let stderr = String::from_utf8_lossy(&output.stderr);
                 let mut last_code: Option<u16> = None;
                 for line in stderr.lines() {

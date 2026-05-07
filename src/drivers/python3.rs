@@ -50,11 +50,10 @@ impl Driver for Python3Driver {
         //
         // argv:
         //   1: url
-        //   2: out_path
-        //   3: follow_redirects ("1" or "0")
-        //   4..: headers as "Key: Value"
+        //   2: follow_redirects ("1" or "0")
+        //   3..: headers as "Key: Value"
         //
-        // stdout: status code (as digits)
+        // stdout: body; stderr: status code (digits)
         let script = r#"
 import sys
 try:
@@ -65,9 +64,8 @@ except ImportError:
 
 def _main(argv):
     url = argv[1]
-    out_path = argv[2]
-    follow = argv[3] == "1"
-    headers = argv[4:]
+    follow = argv[2] == "1"
+    headers = argv[3:]
 
     class NoRedirect(_u.HTTPRedirectHandler):
         def redirect_request(self, req, fp, code, msg, hdrs, newurl):
@@ -102,13 +100,8 @@ def _main(argv):
             sys.stderr.write(str(e) + "\n")
             return 1
 
-    f = open(out_path, "wb")
-    try:
-        f.write(body)
-    finally:
-        f.close()
-
-    sys.stdout.write(str(int(code)))
+    sys.stdout.buffer.write(body)
+    sys.stderr.write(str(int(code)))
     return 0
 
 sys.exit(_main(sys.argv))
@@ -118,7 +111,6 @@ sys.exit(_main(sys.argv))
         cmd.arg("-c")
             .arg(script)
             .arg(&req.url)
-            .arg(out_path)
             .arg(if req.follow_redirects { "1" } else { "0" });
 
         for (k, v) in util::add_common_headers(&req) {
@@ -131,9 +123,10 @@ sys.exit(_main(sys.argv))
             req,
             out_path,
             cancel,
-            move |req, _out, cancel| {
-                let output = util::wait_child_with_output(child, cancel, exe, req.quiet)?;
-                let code_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            move |req, out, cancel| {
+                let output =
+                    util::wait_child_stream_stdout_to_file(child, out, cancel, exe, req.quiet)?;
+                let code_str = String::from_utf8_lossy(&output.stderr).trim().to_string();
                 let code: u16 = code_str
                     .parse()
                     .map_err(|_| ResponseError::BadStatusCode(code_str))?;

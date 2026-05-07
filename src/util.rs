@@ -81,50 +81,91 @@ pub(crate) fn find_program_in_path(program: &str) -> Vec<PathBuf> {
     out
 }
 
-/// Wait for a child process, supporting cancellation and output forwarding.
-pub(crate) fn wait_child_with_output(
+/// Second write handle for the download temp file while [`crate::tempfile::TmpFile`] may still own one.
+pub(crate) fn open_tmp_for_body_stream(path: &Path) -> io::Result<std::fs::File> {
+    let mut opts = std::fs::OpenOptions::new();
+    opts.write(true);
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt as _;
+        const FILE_SHARE_READ: u32 = 0x00000001;
+        const FILE_SHARE_WRITE: u32 = 0x00000002;
+        opts.share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE);
+    }
+    opts.open(path)
+}
+
+/// Wait for a child: stream stdout into `body_path`, buffer stderr (cancellation and quiet match prior behavior).
+pub(crate) fn wait_child_stream_stdout_to_file(
     mut child: Child,
+    body_path: &Path,
     cancel: &Arc<AtomicBool>,
     program: &'static str,
     quiet: Quiet,
 ) -> Result<std::process::Output, ResponseError> {
+    let mut stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| ResponseError::Io(io::Error::other("missing child stdout")))?;
+    let mut stderr_pipe = child
+        .stderr
+        .take()
+        .ok_or_else(|| ResponseError::Io(io::Error::other("missing child stderr")))?;
+
+    let stderr_handle = thread::spawn(move || {
+        let mut buf = Vec::new();
+        let _ = stderr_pipe.read_to_end(&mut buf);
+        buf
+    });
+
+    let mut body_file = open_tmp_for_body_stream(body_path).map_err(ResponseError::Io)?;
+    let copy_handle = thread::spawn(move || io::copy(&mut stdout, &mut body_file));
+
     loop {
         if cancel.load(Ordering::SeqCst) {
             let _ = child.kill();
             let _ = child.wait();
+            let _ = copy_handle.join();
+            let _ = stderr_handle.join();
             return Err(ResponseError::Cancelled);
         }
 
         match child.try_wait() {
-            Ok(Some(_status)) => break,
+            Ok(Some(status)) => {
+                copy_handle
+                    .join()
+                    .map_err(|_| ResponseError::ThreadPanicked)?
+                    .map_err(ResponseError::Io)?;
+
+                let stderr_bytes = stderr_handle
+                    .join()
+                    .map_err(|_| ResponseError::ThreadPanicked)?;
+
+                let should_forward = match quiet {
+                    Quiet::Always => false,
+                    Quiet::Never => true,
+                    Quiet::OnSuccess => !status.success(),
+                };
+                if should_forward {
+                    eprintln!("{}", String::from_utf8_lossy(&stderr_bytes));
+                }
+                if !status.success() {
+                    return Err(ResponseError::CommandFailed {
+                        program,
+                        exit_code: status.code(),
+                        stderr: String::from_utf8_lossy(&stderr_bytes).to_string(),
+                    });
+                }
+                return Ok(std::process::Output {
+                    status,
+                    stdout: Vec::new(),
+                    stderr: stderr_bytes,
+                });
+            }
             Ok(None) => thread::sleep(Duration::from_millis(50)),
             Err(e) => return Err(ResponseError::Io(e)),
         }
     }
-
-    let output = child.wait_with_output().map_err(ResponseError::Io)?;
-
-    let should_forward = match quiet {
-        Quiet::Always => false,
-        Quiet::Never => true,
-        Quiet::OnSuccess => !output.status.success(),
-    };
-
-    // TODO: We use println to ensure that tests don't print debugging data.
-    // This should spawn a thread to capture output, however.
-    if should_forward {
-        println!("{}", String::from_utf8_lossy(&output.stdout));
-        eprintln!("{}", String::from_utf8_lossy(&output.stderr));
-    }
-
-    if !output.status.success() {
-        return Err(ResponseError::CommandFailed {
-            program,
-            exit_code: output.status.code(),
-            stderr: String::from_utf8_lossy(&output.stderr).to_string(),
-        });
-    }
-    Ok(output)
 }
 
 /// Spawn a worker thread that runs a backend download function.

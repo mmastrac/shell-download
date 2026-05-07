@@ -21,9 +21,9 @@ impl Driver for CurlDriver {
         cmd.arg("-sS")
             .arg("--compressed")
             .arg("-o")
-            .arg(out_path)
+            .arg("-")
             .arg("-w")
-            .arg("%{http_code}")
+            .arg("%{stderr}%{http_code}")
             .arg(&req.url);
 
         if req.follow_redirects {
@@ -40,9 +40,10 @@ impl Driver for CurlDriver {
             req,
             out_path,
             cancel,
-            move |req, _out, cancel| {
-                let output = util::wait_child_with_output(child, cancel, "curl", req.quiet)?;
-                let code_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            move |req, out, cancel| {
+                let output =
+                    util::wait_child_stream_stdout_to_file(child, out, cancel, "curl", req.quiet)?;
+                let code_str = String::from_utf8_lossy(&output.stderr).trim().to_string();
                 let code: u16 = code_str
                     .parse()
                     .map_err(|_| ResponseError::BadStatusCode(code_str))?;

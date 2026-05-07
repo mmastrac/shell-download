@@ -49,18 +49,16 @@ try {
   $sc=[int]$response.StatusCode;
 "#;
 
-/// Remainder: body stream to file, catch/finally/exit.
+/// Remainder: body stream to stdout, catch/finally/exit.
 const PS_HTTP_TRY_TAIL: &str = r#"
   $in=$response.Content.ReadAsStreamAsync().GetAwaiter().GetResult();
-  $sh=[System.IO.FileShare]::Write;
-  $outFs=[System.IO.File]::Open($o,[System.IO.FileMode]::Open,[System.IO.FileAccess]::Write,$sh);
+  $outFs=[System.Console]::OpenStandardOutput();
   try {
     $in.CopyTo($outFs);
     $outFs.Flush();
     $exitCode=0;
   } finally {
     if ($null -ne $in) { $in.Dispose() };
-    $outFs.Dispose();
   }
 } catch {
   [Console]::Error.WriteLine("shell-download(powershell): request failed");
@@ -96,7 +94,6 @@ fn start_inner(
     headers_expr.push_str(&ps_headers);
     headers_expr.push('}');
     let url = escape_ps(&req.url);
-    let out_str = escape_ps(&out_path.to_string_lossy());
     let max_redir = if req.follow_redirects { 10 } else { 0 };
 
     let mut script = String::new();
@@ -104,8 +101,6 @@ fn start_inner(
     script.push_str(&headers_expr);
     script.push_str(";$u='");
     script.push_str(&url);
-    script.push_str("';$o='");
-    script.push_str(&out_str);
     script.push_str("';$mr=");
     script.push_str(&max_redir.to_string());
     script.push(';');
@@ -157,8 +152,14 @@ fn start_inner(
         req,
         &out_path,
         cancel,
-        move |req, _tmp_path, cancel| {
-            let output = util::wait_child_with_output(child, cancel, program_label, req.quiet)?;
+        move |req, tmp_path, cancel| {
+            let output = util::wait_child_stream_stdout_to_file(
+                child,
+                tmp_path,
+                cancel,
+                program_label,
+                req.quiet,
+            )?;
             let stderr_str = String::from_utf8_lossy(&output.stderr).to_string();
             let status_line = stderr_str
                 .lines()
