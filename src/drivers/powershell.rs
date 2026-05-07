@@ -57,7 +57,9 @@ fn download_inner(
          $h={headers_expr};\
          try {{\
            $r=Invoke-WebRequest -Uri '{url}' -Headers $h -OutFile '{out_str}' -MaximumRedirection {max_redir} -ErrorAction Stop {basic};\
-           Write-Output $r.StatusCode;\
+           $sc=$r.StatusCode;\
+           if ($null -eq $sc) {{ $sc=0 }};\
+           if ($sc -is [int]) {{ [Console]::Out.Write($sc) }} else {{ [Console]::Out.Write($sc.value__) }};\
            exit 0;\
          }} catch {{\
            Write-Error $_;\
