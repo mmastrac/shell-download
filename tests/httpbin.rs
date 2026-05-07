@@ -231,19 +231,11 @@ fn assert_httpbin_url_field(body: &str, expected_url: &str, ctx: &str) {
             )
         }),
     );
-    let primary = json_roundtrip(&expected_httpbin_url_document(expected_url));
-    let mut ok = actual.get("url") == primary.get("url");
-    if !ok {
-        if let Some(short) = http_echo_url_without_explicit_port(expected_url) {
-            let alt = json_roundtrip(&expected_httpbin_url_document(&short));
-            ok = actual.get("url") == alt.get("url");
-        }
-    }
-    assert!(
-        ok,
-        "{ctx}: wanted url {:?} (or port-stripped variant); got url {:?}; prefix {:?}",
-        primary.get("url").and_then(|v| v.as_str()),
-        actual.get("url").and_then(|v| v.as_str()),
+    let expected = json_roundtrip(&expected_httpbin_url_document(expected_url));
+    assert_eq!(
+        actual.get("url"),
+        expected.get("url"),
+        "{ctx}: url field; prefix {:?}",
         body.chars().take(250).collect::<String>()
     );
 }
@@ -253,14 +245,8 @@ fn httpbin_response_url_matches(body: &str, want: &str) -> bool {
         return false;
     };
     let actual = json_roundtrip(&v);
-    let primary = json_roundtrip(&expected_httpbin_url_document(want));
-    if actual.get("url") == primary.get("url") {
-        return true;
-    }
-    http_echo_url_without_explicit_port(want).is_some_and(|short| {
-        let alt = json_roundtrip(&expected_httpbin_url_document(&short));
-        actual.get("url") == alt.get("url")
-    })
+    let expected = json_roundtrip(&expected_httpbin_url_document(want));
+    actual.get("url") == expected.get("url")
 }
 
 fn assert_httpbin_gzip_field(body: &str) {
@@ -282,26 +268,6 @@ fn assert_httpbin_gzip_field(body: &str) {
         body.chars().take(250).collect::<String>()
     );
 }
-
-/// `http(s)://host:8080/foo` → `http(s)://host/foo` when `:8080` is an explicit port.
-fn http_echo_url_without_explicit_port(url: &str) -> Option<String> {
-    strip_explicit_port(url, "http://").or_else(|| strip_explicit_port(url, "https://"))
-}
-
-fn strip_explicit_port(url: &str, scheme_prefix: &str) -> Option<String> {
-    let rest = url.strip_prefix(scheme_prefix)?;
-    let colon_host = rest.find(':')?;
-    let host = &rest[..colon_host];
-    if host.contains(['[', ']']) {
-        return None;
-    }
-    let after_colon = &rest[colon_host + 1..];
-    let slash = after_colon.find('/')?;
-    let port_str = &after_colon[..slash];
-    port_str.parse::<u16>().ok()?;
-    Some(format!("{scheme_prefix}{host}{}", &after_colon[slash..]))
-}
-
 
 fn unique_name(prefix: &str) -> PathBuf {
     let now = std::time::SystemTime::now()
