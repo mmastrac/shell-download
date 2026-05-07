@@ -48,7 +48,7 @@ jobs:
 
       - name: Install wget (Windows)
         if: ${{ runner.os == 'Windows' }}
-        shell: powershell
+        shell: bash
         run: |
           choco install -y wget
           wget --version
