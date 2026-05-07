@@ -115,8 +115,10 @@ mod tf {
         inner: tempfile::NamedTempFile,
     }
 
-    pub(crate) fn tmp_path(p: &TmpFile) -> &Path {
-        p.inner.path()
+    impl AsRef<Path> for TmpFile {
+        fn as_ref(&self) -> &Path {
+            self.inner.path()
+        }
     }
 
     pub(crate) fn create_tmp_file_in_path(

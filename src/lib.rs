@@ -120,7 +120,7 @@ impl RequestBuilder {
         .map_err(ResponseError::Io)?;
         let handle = self.start(&tmp).map_err(ResponseError::Start)?;
         let _res = handle.join()?;
-        std::fs::read(tmp).map_err(ResponseError::Io)
+        std::fs::read(&tmp).map_err(ResponseError::Io)
     }
 
     /// Start the download in a background thread.
@@ -154,7 +154,11 @@ impl RequestBuilder {
         for d in candidate_downloaders(&self.preferred) {
             match d
                 .driver()
-                .start(self.clone(), tmp_path.as_ref(), Arc::clone(&cancel))
+                .start(
+                    self.clone(),
+                    tmp_path.as_ref(),
+                    Arc::clone(&cancel),
+                )
             {
                 Ok(join) => {
                     return Ok(RequestHandle {
