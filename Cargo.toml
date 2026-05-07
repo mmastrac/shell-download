@@ -1,6 +1,6 @@
 [package]
 name = "shell-download"
-version = "0.12.0"
+version = "0.20.0"
 edition = "2024"
 authors = ["Matt Mastracci <matthew@mastracci.com>"]
 license = "Apache-2.0 OR MIT"
