@@ -152,7 +152,9 @@ fn httpbin_test_redirect_follow_off(driver: shell_download::Downloader) {
                 body.chars().take(250).collect::<String>()
             );
         }
-        Err(shell_download::ResponseError::CommandFailed { program, stderr, .. }) => {
+        Err(shell_download::ResponseError::CommandFailed {
+            program, stderr, ..
+        }) => {
             let _ = std::fs::remove_file(&out);
             // `wget` and PowerShell treat "redirects disabled / max redirects exceeded" as an error exit.
             assert!(

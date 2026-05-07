@@ -1,5 +1,9 @@
 # shell-download
 
+| crate          | docs                                                                               | version                                                                                                 |
+| -------------- | ---------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `shell-download`     | [![docs.rs](https://docs.rs/shell-download/badge.svg)](https://docs.rs/shell-download)           | [![crates.io](https://img.shields.io/crates/v/shell-download.svg)](https://crates.io/crates/shell-download)       |
+
 A zero-dependency Rust library for downloading a URL to a file by delegating to
 whatever download tools are available on the current system.
 

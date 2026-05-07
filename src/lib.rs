@@ -79,9 +79,7 @@ impl RequestBuilder {
     #[cfg(feature = "in-memory")]
     pub fn fetch_string(self) -> Result<String, ResponseError> {
         let tmp_file = tempfile::NamedTempFile::new()?;
-        let handle = self
-            .start(tmp_file.path())
-            .map_err(ResponseError::Start)?;
+        let handle = self.start(tmp_file.path()).map_err(ResponseError::Start)?;
         let _res = handle.join()?;
         std::fs::read_to_string(tmp_file.path()).map_err(ResponseError::Io)
     }
@@ -91,9 +89,7 @@ impl RequestBuilder {
     #[cfg(feature = "in-memory")]
     pub fn fetch_bytes(self) -> Result<Vec<u8>, ResponseError> {
         let tmp_file = tempfile::NamedTempFile::new()?;
-        let handle = self
-            .start(tmp_file.path())
-            .map_err(ResponseError::Start)?;
+        let handle = self.start(tmp_file.path()).map_err(ResponseError::Start)?;
         let _res = handle.join()?;
         std::fs::read(tmp_file.path()).map_err(ResponseError::Io)
     }
