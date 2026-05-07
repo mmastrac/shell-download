@@ -71,6 +71,30 @@ jobs:
           sudo apt-get install -y powershell || true
           command -v pwsh >/dev/null 2>&1 && pwsh -NoProfile -NonInteractive -Command '$PSVersionTable.PSVersion' || true
 
+      - name: Start httpbin (Docker)
+        shell: bash
+        run: |
+          set -euo pipefail
+          PORT=8080
+          if ! command -v docker >/dev/null 2>&1; then
+            echo "SHELL_DOWNLOAD_HTTPBIN=https://httpbin.org" >> "$GITHUB_ENV"
+            echo "Docker not found; falling back to public httpbin"
+            exit 0
+          fi
+          docker pull kennethreitz/httpbin:latest
+          docker rm -f shell-download-httpbin 2>/dev/null || true
+          docker run -d --name shell-download-httpbin --rm -p "127.0.0.1:${PORT}:80" kennethreitz/httpbin:latest
+          echo "SHELL_DOWNLOAD_HTTPBIN=http://127.0.0.1:${PORT}" >> "$GITHUB_ENV"
+          for _ in $(seq 1 60); do
+            if curl -sfS "http://127.0.0.1:${PORT}/get" >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "httpbin did not become ready in time" >&2
+          docker logs shell-download-httpbin 2>&1 || true
+          exit 1
+
       - name: Run clippy (${{ matrix.feature_combo }})
         shell: bash
         run: cargo clippy ${{ matrix.cargo_args }} -- -D warnings

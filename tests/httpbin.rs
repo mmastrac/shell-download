@@ -1,4 +1,13 @@
 use std::path::PathBuf;
+use std::sync::LazyLock;
+
+static HTTPBIN_BASE: LazyLock<String> = LazyLock::new(|| {
+    std::env::var("SHELL_DOWNLOAD_HTTPBIN")
+        .unwrap_or_else(|_| "https://httpbin.org".to_string())
+        .trim()
+        .trim_end_matches('/')
+        .to_string()
+});
 
 #[test]
 fn fetch_httpbin_redirect_curl() {
@@ -29,33 +38,38 @@ fn httpbin_test(driver: shell_download::Downloader) {
 }
 
 fn httpbin_test_redirect(driver: shell_download::Downloader) {
-    let url = "https://httpbin.org/redirect/2";
-    let Some(body) = fetch_httpbin(driver, url.to_string()) else {
+    let base = HTTPBIN_BASE.as_str();
+    let url = format!("{base}/redirect/5");
+    let Some(body) = fetch_httpbin(driver, url) else {
         return;
     };
 
+    let expect = format!("\"url\": \"{base}/get\"");
     assert!(
-        body.contains("\"url\": \"https://httpbin.org/get\""),
-        "body did not look like final /get response; got prefix: {:?}",
+        body.contains(&expect),
+        "body did not look like final /get response; expected substring {expect:?}; got prefix: {:?}",
         body.chars().take(250).collect::<String>()
     );
 }
 
 fn httpbin_test_get_tough_chars(driver: shell_download::Downloader) {
-    let url = r#"https://httpbin.org/anything/foo$%25?!&1"'\"#;
-    let Some(body) = fetch_httpbin(driver, url.to_string()) else {
+    let base = HTTPBIN_BASE.as_str();
+    let path = "anything/foo$%25?!&1\"'\\";
+    let url = format!("{base}/{path}");
+    let Some(body) = fetch_httpbin(driver, url) else {
         return;
     };
 
+    let expect = format!(r#""url": "{base}/anything/foo$%25?!&1\"'\\""#);
     assert!(
-        body.contains(r#""url": "https://httpbin.org/anything/foo$%25?!&1\"'\\""#),
-        "body did not look like final /get response; got prefix: {:?}",
+        body.contains(&expect),
+        "body did not look like /anything response; expected substring {expect:?}; got prefix: {:?}",
         body.chars().take(250).collect::<String>()
     );
 }
 
 fn fetch_httpbin(driver: shell_download::Downloader, url: String) -> Option<String> {
-    fetch_httpbin_with(driver, url, true, |status| status >= 200 && status < 400)
+    fetch_httpbin_with(driver, url, true, |status| (200..400).contains(&status))
 }
 
 fn fetch_httpbin_with(
@@ -114,13 +128,14 @@ fn fetch_httpbin_raw(
 }
 
 fn httpbin_test_redirect_follow_off(driver: shell_download::Downloader) {
-    let url = "https://httpbin.org/redirect/2";
+    let base = HTTPBIN_BASE.as_str();
+    let url = format!("{base}/redirect/2");
     let mut out = std::env::temp_dir();
     out.push(unique_name(&format!(
         "shell-download-httpbin-follow-off-{driver:?}"
     )));
 
-    let handle = shell_download::RequestBuilder::new(url.to_string())
+    let handle = shell_download::RequestBuilder::new(url)
         .quiet(shell_download::Quiet::Never)
         .preferred_downloader(driver)
         .follow_redirects(false)
@@ -137,6 +152,7 @@ fn httpbin_test_redirect_follow_off(driver: shell_download::Downloader) {
         Err(err) => panic!("failed to start: {err:?}"),
     };
 
+    let not_final = format!("\"url\": \"{base}/get\"");
     match handle.join() {
         Ok(resp) => {
             assert!(
@@ -148,7 +164,7 @@ fn httpbin_test_redirect_follow_off(driver: shell_download::Downloader) {
             let body = std::fs::read_to_string(&out).unwrap_or_default();
             let _ = std::fs::remove_file(&out);
             assert!(
-                !body.contains("\"url\": \"https://httpbin.org/get\""),
+                !body.contains(&not_final),
                 "expected not to follow redirects; got body prefix: {:?}",
                 body.chars().take(250).collect::<String>()
             );
@@ -172,9 +188,9 @@ fn httpbin_test_redirect_follow_off(driver: shell_download::Downloader) {
 }
 
 fn httpbin_test_custom_status(driver: shell_download::Downloader) {
-    // Use a custom status endpoint that most tools treat as successful (no 4xx/5xx error exit).
-    let url = "https://httpbin.org/status/204";
-    let Some(body) = fetch_httpbin_with(driver, url.to_string(), true, |s| s == 204) else {
+    let base = HTTPBIN_BASE.as_str();
+    let url = format!("{base}/status/204");
+    let Some(body) = fetch_httpbin_with(driver, url, true, |s| s == 204) else {
         return;
     };
 
@@ -186,13 +202,12 @@ fn httpbin_test_custom_status(driver: shell_download::Downloader) {
 }
 
 fn httpbin_test_gzip(driver: shell_download::Downloader) {
-    // httpbin endpoint that returns a gzip-compressed JSON response.
-    let url = "https://httpbin.org/gzip";
-    let Some(body) = fetch_httpbin(driver, url.to_string()) else {
+    let base = HTTPBIN_BASE.as_str();
+    let url = format!("{base}/gzip");
+    let Some(body) = fetch_httpbin(driver, url) else {
         return;
     };
 
-    // If we didn't decode gzip, this would be binary and not contain JSON markers.
     assert!(
         body.contains("\"gzipped\": true"),
         "body did not look like decoded /gzip response; got prefix: {:?}",
