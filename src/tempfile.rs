@@ -210,7 +210,18 @@ mod tf {
             let inner = this.inner.take().expect("tmp path present");
             let new_path = new_path.as_ref();
             let _ = std::fs::remove_file(new_path);
-            inner.persist(new_path).map_err(Into::into)
+            // `NamedTempFile::persist` moves the path while the inner `File` is still open.
+            // On Windows, `MoveFileExW` then fails with ERROR_SHARING_VIOLATION (32).
+            // `into_temp_path` drops the handle first (same idea as the stdlib `simple` backend).
+            #[cfg(windows)]
+            {
+                inner.into_temp_path().persist(new_path)?;
+                File::open(new_path)
+            }
+            #[cfg(not(windows))]
+            {
+                inner.persist(new_path).map_err(Into::into)
+            }
         }
     }
 }
