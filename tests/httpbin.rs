@@ -59,7 +59,7 @@ fn httpbin_test_get_tough_chars(driver: shell_download::Downloader) {
     };
 
     let want = format!("{base}/{path}");
-    assert_httpbin_url_field(&body, &want, "/anything response");
+    assert_httpbin_url_field_allow_pct25_echo(&body, &want, "/anything response");
 }
 
 fn fetch_httpbin(driver: shell_download::Downloader, url: String) -> Option<String> {
@@ -222,31 +222,59 @@ fn expected_httpbin_url_document(url: &str) -> Value {
     serde_json::from_str(&raw).expect("minimal httpbin url document")
 }
 
-fn assert_httpbin_url_field(body: &str, expected_url: &str, ctx: &str) {
-    let actual = json_roundtrip(
-        &serde_json::from_str(body).unwrap_or_else(|e| {
-            panic!(
-                "{ctx}: invalid JSON ({e}); prefix {:?}",
-                body.chars().take(250).collect::<String>()
-            )
-        }),
-    );
+fn httpbin_url_field_eq(body: &str, expected_url: &str) -> bool {
+    let Ok(v) = serde_json::from_str::<Value>(body) else {
+        return false;
+    };
+    let actual = json_roundtrip(&v);
     let expected = json_roundtrip(&expected_httpbin_url_document(expected_url));
-    assert_eq!(
-        actual.get("url"),
-        expected.get("url"),
+    actual.get("url") == expected.get("url")
+}
+
+fn assert_httpbin_url_field(body: &str, expected_url: &str, ctx: &str) {
+    serde_json::from_str::<Value>(body).unwrap_or_else(|e| {
+        panic!(
+            "{ctx}: invalid JSON ({e}); prefix {:?}",
+            body.chars().take(250).collect::<String>()
+        )
+    });
+    assert!(
+        httpbin_url_field_eq(body, expected_url),
         "{ctx}: url field; prefix {:?}",
         body.chars().take(250).collect::<String>()
     );
 }
 
+/// Werkzeug sometimes echoes `%` where the request had `%25` in the path (depends on stack).
+///
+/// This is not `std::process::Command` escaping: arguments are passed without a shell, and the same
+/// mismatch shows up for curl, wget, OpenSSL, and PowerShell. Linux CI usually runs the Docker
+/// `kennethreitz/httpbin` image; macOS/Windows use `pip install httpbin` + Waitress—different
+/// httpbin/Werkzeug versions rebuild `request.url` for `/anything` JSON slightly differently.
+fn assert_httpbin_url_field_allow_pct25_echo(body: &str, expected_url: &str, ctx: &str) {
+    serde_json::from_str::<Value>(body).unwrap_or_else(|e| {
+        panic!(
+            "{ctx}: invalid JSON ({e}); prefix {:?}",
+            body.chars().take(250).collect::<String>()
+        )
+    });
+    if httpbin_url_field_eq(body, expected_url) {
+        return;
+    }
+    if expected_url.contains("%25") {
+        let alt = expected_url.replace("%25", "%");
+        if httpbin_url_field_eq(body, &alt) {
+            return;
+        }
+    }
+    panic!(
+        "{ctx}: url field; wanted {expected_url:?} (or %25→% echo); prefix {:?}",
+        body.chars().take(250).collect::<String>()
+    );
+}
+
 fn httpbin_response_url_matches(body: &str, want: &str) -> bool {
-    let Ok(v) = serde_json::from_str::<Value>(body) else {
-        return false;
-    };
-    let actual = json_roundtrip(&v);
-    let expected = json_roundtrip(&expected_httpbin_url_document(want));
-    actual.get("url") == expected.get("url")
+    httpbin_url_field_eq(body, want)
 }
 
 fn assert_httpbin_gzip_field(body: &str) {

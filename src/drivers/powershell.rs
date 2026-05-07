@@ -38,7 +38,13 @@ try {
   $handler.AutomaticDecompression=[System.Net.DecompressionMethods]::GZip -bor [System.Net.DecompressionMethods]::Deflate;
   $client=New-Object System.Net.Http.HttpClient($handler);
   foreach ($e in $h.GetEnumerator()) { [void]$client.DefaultRequestHeaders.TryAddWithoutValidation([string]$e.Key,[string]$e.Value) };
-  $uri=New-Object System.Uri($u);
+  try {
+    $uriOpts=[System.UriCreationOptions]::new();
+    $uriOpts.DangerousDisablePathAndQueryCanonicalization=$true;
+    $uri=[System.Uri]::new($u,$uriOpts)
+  } catch {
+    $uri=New-Object System.Uri($u)
+  };
   $response=$client.GetAsync($uri,[System.Net.Http.HttpCompletionOption]::ResponseHeadersRead).GetAwaiter().GetResult();
   $sc=[int]$response.StatusCode;
 "#;
