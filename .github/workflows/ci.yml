@@ -19,6 +19,12 @@ jobs:
           input: |
             rust-toolchain: stable
             job: [test]
+            feature_combo: [default, all-features, no-default-features]
+            cargo_args:
+              $match:
+                "this.feature_combo == 'default'": ""
+                "this.feature_combo == 'all-features'": "--all-features"
+                "this.feature_combo == 'no-default-features'": "--no-default-features"
             label:
               linux:
                 os: ubuntu-latest
@@ -30,7 +36,7 @@ jobs:
             github: ${{ toJSON(github) }}
 
   test:
-    name: ${{ matrix.label }} / ${{ matrix.job }} (${{ matrix.rust-toolchain }})
+    name: ${{ matrix.label }} / ${{ matrix.job }} / ${{ matrix.feature_combo }} (${{ matrix.rust-toolchain }})
     runs-on: ${{ matrix.os }}
     needs: generate-matrix
     strategy:
@@ -45,6 +51,7 @@ jobs:
         uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           toolchain: ${{ matrix.rust-toolchain }}
+          components: clippy
 
       - name: Install wget (Windows)
         if: ${{ runner.os == 'Windows' }}
@@ -64,14 +71,10 @@ jobs:
           sudo apt-get install -y powershell || true
           command -v pwsh >/dev/null 2>&1 && pwsh -NoProfile -NonInteractive -Command '$PSVersionTable.PSVersion' || true
 
-      - name: Run tests (default features)
+      - name: Run clippy (${{ matrix.feature_combo }})
         shell: bash
-        run: cargo test
+        run: cargo clippy ${{ matrix.cargo_args }} -- -D warnings
 
-      - name: Run tests (all features)
+      - name: Run tests (${{ matrix.feature_combo }})
         shell: bash
-        run: cargo test --all-features
-
-      - name: Run tests (no features)
-        shell: bash
-        run: cargo test --no-default-features
+        run: cargo test ${{ matrix.cargo_args }}
