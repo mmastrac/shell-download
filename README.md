@@ -17,6 +17,14 @@ finally `openssl` (HTTPS via `openssl s_client`, HTTP via a raw TCP GET).
 - The response body is written to that path (decompressed if the response is gzip).
 - The request runs in a background thread and returns a cancellable handle.
 
+## When to use this crate
+
+If you can afford the compile-time cost and binary size of a much
+fuller-featured crate such as `reqwest`, that's probably a better choice. But if
+you need a small, zero-dependency library for just downloading a file, and you'd
+prefer not to add code to call into `curl` or `wget` or `pwsh` or whatever
+happens to be installed on a random machine, this crate is a good choice.
+
 ## Features
 
 By default, these features are not enabled, making the crate zero-dependency.
