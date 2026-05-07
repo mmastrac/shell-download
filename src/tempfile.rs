@@ -211,7 +211,6 @@ mod tests {
         );
     }
 
-    #[cfg(unix)]
     fn sh_single_quote(s: &str) -> String {
         // POSIX-safe single-quoting: close, escape, reopen.
         format!("'{}'", s.replace('\'', "'\\''"))
@@ -231,34 +230,21 @@ mod tests {
             let path = tmp.as_ref().to_path_buf();
 
             // Spawn an external command that writes to the file by path.
-            #[cfg(unix)]
-            {
-                let cmd = format!("echo hi > {}", sh_single_quote(&path.to_string_lossy()));
-                let status = Command::new("sh")
-                    .arg("-c")
-                    .arg(cmd)
-                    .status()
-                    .expect("spawn sh");
-                assert!(status.success(), "sh command failed");
-            }
-
-            #[cfg(windows)]
-            {
-                // `cmd.exe` quoting is fiddly; wrap the whole command in quotes and avoid spaces around `>`.
-                let cmd = format!("\"echo hi>\\\"{}\\\"\"", path.display());
-                let out = Command::new("cmd")
-                    .arg("/C")
-                    .arg(cmd)
-                    .output()
-                    .expect("spawn cmd");
-                assert!(
-                    out.status.success(),
-                    "cmd command failed: status={:?} stdout={:?} stderr={:?}",
-                    out.status.code(),
-                    String::from_utf8_lossy(&out.stdout),
-                    String::from_utf8_lossy(&out.stderr)
-                );
-            }
+            //
+            // We use `sh` on all platforms (GitHub Windows runners have it).
+            let cmd = format!("echo hi > {}", sh_single_quote(&path.to_string_lossy()));
+            let out = Command::new("sh")
+                .arg("-c")
+                .arg(cmd)
+                .output()
+                .expect("spawn sh");
+            assert!(
+                out.status.success(),
+                "sh command failed: status={:?} stdout={:?} stderr={:?}",
+                out.status.code(),
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            );
 
             assert!(path.exists(), "expected temp file to exist after write");
             path
