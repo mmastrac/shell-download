@@ -38,34 +38,14 @@ fn fetch_httpbin_redirect(driver: shell_download::Downloader) {
         Ok(h) => h,
         Err(shell_download::StartError::NoDriverFound) => {
             if is_ci() {
-                panic!("no downloader available in CI");
+                panic!("failed to start downloader in CI");
             }
             return;
         }
-        Err(shell_download::StartError::IoError(e)) => {
-            if is_ci() {
-                panic!("failed to start downloader in CI: {e}");
-            }
-            return;
-        }
+        Err(err) => panic!("failed to start: {err:?}"),
     };
 
-    let resp = match handle.join() {
-        Ok(r) => r,
-        Err(shell_download::ResponseError::Start(shell_download::StartError::NoDriverFound)) => {
-            if is_ci() {
-                panic!("no downloader available in CI");
-            }
-            return;
-        }
-        Err(shell_download::ResponseError::Start(shell_download::StartError::IoError(e))) => {
-            if is_ci() {
-                panic!("failed to start downloader in CI: {e}");
-            }
-            return;
-        }
-        Err(e) => panic!("download failed: {e:?}"),
-    };
+    let resp = handle.join().expect("download failed");
 
     assert!(
         resp.status_code >= 200 && resp.status_code < 400,

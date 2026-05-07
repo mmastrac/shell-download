@@ -7,7 +7,9 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
 };
 
-use crate::{RequestBuilder, Response, ResponseError, StartError, drivers::Driver, util};
+use crate::{
+    RequestBuilder, Response, ResponseError, StartError, drivers::Driver, url_parser::Url, util,
+};
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct OpenSslDriver;
@@ -23,7 +25,7 @@ impl Driver for OpenSslDriver {
 
         // If we can determine upfront that this request begins with https://, try to spawn
         // `openssl` now so that "command not found" becomes a StartError.
-        if let Ok(parsed) = ParsedUrl::parse(&req.url) {
+        if let Ok(parsed) = Url::new(&req.url) {
             if parsed.scheme == "https" {
                 let mut cmd = Command::new("openssl");
                 cmd.arg("version")
@@ -43,9 +45,13 @@ impl Driver for OpenSslDriver {
             }
         }
 
-        Ok(util::spawn_request_thread(req, target_path, tmp_path, cancel, move |req, out, cancel| {
-            download_inner(req, out, cancel)
-        }))
+        Ok(util::spawn_request_thread(
+            req,
+            target_path,
+            tmp_path,
+            cancel,
+            move |req, out, cancel| download_inner(req, out, cancel),
+        ))
     }
 }
 
@@ -55,10 +61,14 @@ fn download_inner(
     cancel: &Arc<AtomicBool>,
 ) -> Result<(u16, bool), ResponseError> {
     let mut current_url = req.url.clone();
-    let mut redirects_left = if req.follow_redirects { 10usize } else { 0usize };
+    let mut redirects_left = if req.follow_redirects {
+        10usize
+    } else {
+        0usize
+    };
 
     loop {
-        let url = ParsedUrl::parse(&current_url)?;
+        let url = Url::new(&current_url).map_err(|_| ResponseError::InvalidUrl)?;
         let (status_code, headers, body) = match url.scheme.as_str() {
             "https" => get_https_via_openssl(&url, req, cancel)?,
             "http" => get_http_via_tcp(&url, req, cancel)?,
@@ -97,18 +107,14 @@ fn download_inner(
     }
 }
 
-
 fn get_http_via_tcp(
-    url: &ParsedUrl,
+    url: &Url,
     req: &RequestBuilder,
     cancel: &Arc<AtomicBool>,
 ) -> Result<(u16, Vec<(String, String)>, Vec<u8>), ResponseError> {
     let host = &url.host;
     let port = url.port.unwrap_or(80);
-    let mut path = url.path_and_query.clone();
-    if path.is_empty() {
-        path = "/".into();
-    }
+    let path = url.path_and_query();
 
     let mut request = String::new();
     request.push_str(&format!("GET {path} HTTP/1.1\r\n"));
@@ -145,16 +151,13 @@ fn get_http_via_tcp(
 }
 
 fn get_https_via_openssl(
-    url: &ParsedUrl,
+    url: &Url,
     req: &RequestBuilder,
     cancel: &Arc<AtomicBool>,
 ) -> Result<(u16, Vec<(String, String)>, Vec<u8>), ResponseError> {
     let host = url.host.clone();
     let port = url.port.unwrap_or(443);
-    let mut path = url.path_and_query.clone();
-    if path.is_empty() {
-        path = "/".into();
-    }
+    let path = url.path_and_query();
 
     let mut request = String::new();
     request.push_str(&format!("GET {path} HTTP/1.1\r\n"));
@@ -226,13 +229,13 @@ fn resolve_location(current_url: &str, location: &str) -> String {
         return location.to_string();
     }
     if location.starts_with('/') {
-        if let Ok(parsed) = ParsedUrl::parse(current_url) {
-            return format!("{}://{}{}", parsed.scheme, parsed.host, location);
+        if let Ok(parsed) = Url::new(current_url) {
+            return format!("{}://{}{}", parsed.scheme, parsed.authority(), location);
         }
     }
     // Best-effort: treat as relative-to-root if we can't safely resolve.
-    if let Ok(parsed) = ParsedUrl::parse(current_url) {
-        return format!("{}://{}/{}", parsed.scheme, parsed.host, location);
+    if let Ok(parsed) = Url::new(current_url) {
+        return format!("{}://{}/{}", parsed.scheme, parsed.authority(), location);
     }
     location.to_string()
 }
@@ -300,47 +303,4 @@ fn decode_chunked(mut body: &[u8]) -> Result<Vec<u8>, ResponseError> {
         body = &body[size + 2..];
     }
     Ok(out)
-}
-
-#[derive(Debug, Clone)]
-struct ParsedUrl {
-    scheme: String,
-    host: String,
-    port: Option<u16>,
-    path_and_query: String,
-}
-
-impl ParsedUrl {
-    fn parse(url: &str) -> Result<Self, ResponseError> {
-        let (scheme, rest) = url.split_once("://").ok_or(ResponseError::InvalidUrl)?;
-        let scheme = scheme.to_ascii_lowercase();
-        let (hostport, path) = match rest.split_once('/') {
-            Some((h, p)) => (h, format!("/{p}")),
-            None => (rest, "/".to_string()),
-        };
-
-        if hostport.is_empty() {
-            return Err(ResponseError::InvalidUrl);
-        }
-
-        let (host, port) = if let Some((h, p)) = hostport.rsplit_once(':') {
-            if p.chars().all(|c| c.is_ascii_digit()) {
-                (
-                    h.to_string(),
-                    Some(p.parse::<u16>().map_err(|_| ResponseError::InvalidUrl)?),
-                )
-            } else {
-                (hostport.to_string(), None)
-            }
-        } else {
-            (hostport.to_string(), None)
-        };
-
-        Ok(Self {
-            scheme,
-            host,
-            port,
-            path_and_query: path,
-        })
-    }
 }

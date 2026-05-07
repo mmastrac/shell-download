@@ -30,22 +30,28 @@ impl Driver for WgetDriver {
 
         let child = util::spawn_child_for_output(cmd, "wget")?;
 
-        Ok(util::spawn_request_thread(req, target_path, tmp_path, cancel, move |req, _out, cancel| {
-            let output = util::wait_child_with_output(child, cancel, "wget", req.quiet)?;
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            let mut last_code: Option<u16> = None;
-            for line in stderr.lines() {
-                let line = line.trim();
-                if let Some(rest) = line.strip_prefix("HTTP/") {
-                    let parts: Vec<&str> = rest.split_whitespace().collect();
-                    if parts.len() >= 2 {
-                        if let Ok(code) = parts[1].parse::<u16>() {
-                            last_code = Some(code);
+        Ok(util::spawn_request_thread(
+            req,
+            target_path,
+            tmp_path,
+            cancel,
+            move |req, _out, cancel| {
+                let output = util::wait_child_with_output(child, cancel, "wget", req.quiet)?;
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                let mut last_code: Option<u16> = None;
+                for line in stderr.lines() {
+                    let line = line.trim();
+                    if let Some(rest) = line.strip_prefix("HTTP/") {
+                        let parts: Vec<&str> = rest.split_whitespace().collect();
+                        if parts.len() >= 2 {
+                            if let Ok(code) = parts[1].parse::<u16>() {
+                                last_code = Some(code);
+                            }
                         }
                     }
                 }
-            }
-            Ok((last_code.unwrap_or(200), false))
-        }))
+                Ok((last_code.unwrap_or(200), false))
+            },
+        ))
     }
 }

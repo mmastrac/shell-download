@@ -11,6 +11,15 @@ finally `openssl` (HTTPS via `openssl s_client`, HTTP via a raw TCP GET).
 - The response body is written to that path (decompressed if the response is gzip).
 - The request runs in a background thread and returns a cancellable handle.
 
+## Features
+
+By default, these features are not enabled, making the crate zero-dependency.
+
+ - `url`: Parse URLs using the `url` crate (adds a number of dependencies, but
+   makes URL parsing more accurate).
+ - `in-memory`: Receive the response body as a String or Vec<u8> instead of
+   requiring a path. Uses the `tempfile` crate.
+
 ## Usage
 
 ```rust

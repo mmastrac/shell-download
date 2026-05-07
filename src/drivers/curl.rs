@@ -1,8 +1,5 @@
 use std::process::Command;
-use std::sync::{
-    Arc,
-    atomic::AtomicBool,
-};
+use std::sync::{Arc, atomic::AtomicBool};
 use std::thread::JoinHandle;
 
 use crate::{RequestBuilder, Response, ResponseError, StartError, drivers::Driver, util};
@@ -38,13 +35,19 @@ impl Driver for CurlDriver {
 
         let child = util::spawn_child_for_output(cmd, "curl")?;
 
-        Ok(util::spawn_request_thread(req, target_path, tmp_path, cancel, move |req, _out, cancel| {
-            let output = util::wait_child_with_output(child, cancel, "curl", req.quiet)?;
-            let code_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            let code: u16 = code_str
-                .parse()
-                .map_err(|_| ResponseError::BadStatusCode(code_str))?;
-            Ok((code, false))
-        }))
+        Ok(util::spawn_request_thread(
+            req,
+            target_path,
+            tmp_path,
+            cancel,
+            move |req, _out, cancel| {
+                let output = util::wait_child_with_output(child, cancel, "curl", req.quiet)?;
+                let code_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                let code: u16 = code_str
+                    .parse()
+                    .map_err(|_| ResponseError::BadStatusCode(code_str))?;
+                Ok((code, false))
+            },
+        ))
     }
 }

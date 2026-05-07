@@ -1,4 +1,5 @@
 mod drivers;
+mod url_parser;
 mod util;
 
 use std::io;
@@ -79,12 +80,18 @@ impl RequestBuilder {
 
         let _ = std::fs::remove_file(&target_path);
 
+        // URL preflight: fail early with a message useful to callers.
+        url_parser::Url::new(&self.url).map_err(|e| StartError::Url(e.to_string()))?;
+
         let cancel = Arc::new(AtomicBool::new(false));
         let mut saw_non_not_found: Option<io::Error> = None;
         let mut saw_any_not_found = false;
 
         for d in candidate_downloaders(&self.preferred) {
-            match d.driver().start(self.clone(), target_path.clone(), Arc::clone(&cancel)) {
+            match d
+                .driver()
+                .start(self.clone(), target_path.clone(), Arc::clone(&cancel))
+            {
                 Ok(join) => {
                     return Ok(RequestHandle {
                         cancel,
@@ -101,6 +108,7 @@ impl RequestBuilder {
                     }
                     continue;
                 }
+                Err(StartError::Url(msg)) => return Err(StartError::Url(msg)),
             }
         }
 
@@ -111,7 +119,6 @@ impl RequestBuilder {
             return Err(StartError::NoDriverFound);
         }
         Err(StartError::NoDriverFound)
-
     }
 }
 
@@ -162,6 +169,7 @@ pub struct Response {
 pub enum StartError {
     NoDriverFound,
     IoError(io::Error),
+    Url(String),
 }
 
 impl From<io::Error> for StartError {
