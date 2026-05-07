@@ -1,25 +1,16 @@
 use std::fs::OpenOptions;
+use std::hash::{BuildHasher, Hash, Hasher, RandomState};
 use std::io::{self, Read as _, Write as _};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::sync::{
-    Arc,
-    atomic::{AtomicBool, Ordering},
-};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::thread::JoinHandle;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime};
 
+use crate::url_parser::Url;
 use crate::{ContentEncoding, DownloadResult, Quiet, RequestBuilder, ResponseError, StartError};
-
-/// Create a process-unique suffix for temporary files.
-pub(crate) fn unique_suffix() -> Option<String> {
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .ok()?
-        .as_millis();
-    Some(format!("{}-{}", std::process::id(), now))
-}
 
 /// Ensure common headers are present (notably gzip support).
 pub(crate) fn add_common_headers(req: &RequestBuilder) -> Vec<(String, String)> {
@@ -175,7 +166,15 @@ where
 /// This pre-creates the file using `create_new` so the path cannot be swapped
 /// for a symlink between selection and use. On Unix we additionally request
 /// mode `0600` for the temp file.
-pub(crate) fn create_tmp_file_for_target(target_path: &Path) -> io::Result<PathBuf> {
+pub(crate) fn create_tmp_file_for_target(url: &Url, target_path: &Path) -> io::Result<PathBuf> {
+    create_tmp_file_for_target_seed("download", Some(url), target_path)
+}
+
+fn create_tmp_file_for_target_seed(
+    seed: &str,
+    url: Option<&Url>,
+    target_path: &Path,
+) -> io::Result<PathBuf> {
     let parent = target_path.parent().unwrap_or_else(|| Path::new("."));
 
     // Try to keep filenames readable while still making them unique.
@@ -184,10 +183,10 @@ pub(crate) fn create_tmp_file_for_target(target_path: &Path) -> io::Result<PathB
         .and_then(|s| s.to_str())
         .unwrap_or("download");
 
-    let suffix = unique_suffix().unwrap_or_else(|| "download".into());
-
     for attempt in 0u32..200 {
-        let name = format!(".{base}.{suffix}.{attempt}.tmp");
+        let hash = create_random_suffix(seed, url, target_path, attempt);
+
+        let name = format!(".{base}.{hash:x}.tmp");
         let path = parent.join(name);
 
         let mut opts = OpenOptions::new();
@@ -210,6 +209,21 @@ pub(crate) fn create_tmp_file_for_target(target_path: &Path) -> io::Result<PathB
         io::ErrorKind::AlreadyExists,
         "failed to create unique temporary download file",
     ))
+}
+
+/// Create a random suffix for the temporary file name.
+fn create_random_suffix(seed: &str, url: Option<&Url>, target_path: &Path, attempt: u32) -> u64 {
+    let mut hasher = RandomState::new().build_hasher();
+    seed.hash(&mut hasher);
+    attempt.hash(&mut hasher);
+    url.hash(&mut hasher);
+    target_path.hash(&mut hasher);
+    let now = SystemTime::now();
+    now.hash(&mut hasher);
+    std::process::id().hash(&mut hasher);
+    std::thread::current().id().hash(&mut hasher);
+    let hash = hasher.finish();
+    hash
 }
 
 /// Move or decode the temp file into its final location.
@@ -247,22 +261,43 @@ pub(crate) fn gunzip_to_target(src: &Path, dst: &Path) -> Result<(), ResponseErr
         .stderr(Stdio::piped());
     let mut child = cmd.spawn().map_err(ResponseError::Io)?;
 
-    let mut out_file = std::fs::File::create(dst)?;
-    {
-        let mut stdout = child.stdout.take().ok_or_else(|| {
-            ResponseError::Io(io::Error::new(io::ErrorKind::Other, "missing gzip stdout"))
-        })?;
-        io::copy(&mut stdout, &mut out_file)?;
-        out_file.flush()?;
-    }
+    let mut stdout = child.stdout.take().ok_or_else(|| {
+        ResponseError::Io(io::Error::new(io::ErrorKind::Other, "missing gzip stdout"))
+    })?;
+    let mut stderr = child.stderr.take().ok_or_else(|| {
+        ResponseError::Io(io::Error::new(io::ErrorKind::Other, "missing gzip stderr"))
+    })?;
 
-    let output = child.wait_with_output().map_err(ResponseError::Io)?;
-    if !output.status.success() {
+    // Read stderr concurrently to avoid pipe deadlocks if gzip is noisy.
+    let stderr_join = thread::spawn(move || {
+        let mut buf = Vec::new();
+        let _ = stderr.read_to_end(&mut buf);
+        buf
+    });
+
+    // Write to a temp file and then atomically rename into place.
+    let tmp_dst = create_tmp_file_for_target_seed("gunzip", None, dst)?;
+    let mut out_file = std::fs::File::options()
+        .write(true)
+        .truncate(true)
+        .open(&tmp_dst)
+        .map_err(ResponseError::Io)?;
+
+    io::copy(&mut stdout, &mut out_file).map_err(ResponseError::Io)?;
+    out_file.flush().map_err(ResponseError::Io)?;
+
+    let status = child.wait().map_err(ResponseError::Io)?;
+    let stderr_bytes = stderr_join.join().unwrap_or_default();
+
+    if !status.success() {
+        let _ = std::fs::remove_file(&tmp_dst);
         return Err(ResponseError::GzipFailed {
-            exit_code: output.status.code(),
-            stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+            exit_code: status.code(),
+            stderr: String::from_utf8_lossy(&stderr_bytes).to_string(),
         });
     }
 
+    let _ = std::fs::remove_file(dst);
+    std::fs::rename(&tmp_dst, dst).map_err(ResponseError::Io)?;
     Ok(())
 }

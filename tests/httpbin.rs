@@ -25,6 +25,7 @@ fn httpbin_test(driver: shell_download::Downloader) {
     httpbin_test_get_tough_chars(driver);
     httpbin_test_redirect_follow_off(driver);
     httpbin_test_custom_status(driver);
+    httpbin_test_gzip(driver);
 }
 
 fn httpbin_test_redirect(driver: shell_download::Downloader) {
@@ -180,6 +181,21 @@ fn httpbin_test_custom_status(driver: shell_download::Downloader) {
     assert!(
         body.trim().is_empty(),
         "expected empty body for 204; got prefix: {:?}",
+        body.chars().take(250).collect::<String>()
+    );
+}
+
+fn httpbin_test_gzip(driver: shell_download::Downloader) {
+    // httpbin endpoint that returns a gzip-compressed JSON response.
+    let url = "https://httpbin.org/gzip";
+    let Some(body) = fetch_httpbin(driver, url.to_string()) else {
+        return;
+    };
+
+    // If we didn't decode gzip, this would be binary and not contain JSON markers.
+    assert!(
+        body.contains("\"gzipped\": true"),
+        "body did not look like decoded /gzip response; got prefix: {:?}",
         body.chars().take(250).collect::<String>()
     );
 }

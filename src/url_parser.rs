@@ -1,4 +1,5 @@
 /// Parsed URL components used by the built-in downloader.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Url {
     /// URL scheme (lowercased when parsed without the `url` feature).
     pub scheme: String,
