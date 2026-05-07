@@ -46,11 +46,6 @@ fn localhost_python_powershell() {
 }
 
 #[test]
-fn localhost_python_fetch() {
-    hit_localhost(shell_download::Downloader::Fetch);
-}
-
-#[test]
 fn localhost_python_openssl() {
     hit_localhost(shell_download::Downloader::OpenSsl);
 }
@@ -71,32 +66,31 @@ fn hit_localhost(driver: shell_download::Downloader) {
 
     let handle = match handle {
         Ok(h) => h,
-        Err(shell_download::Error::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => {
-            if is_ci() {
-                panic!("required tool for {driver:?} not found: {e}");
-            }
-            return;
-        }
-        Err(shell_download::Error::NoDownloader) => {
+        Err(shell_download::StartError::NoDriverFound) => {
             if is_ci() {
                 panic!("no downloader available in CI");
             }
             return;
         }
-        Err(e) => panic!("start failed: {e:?}"),
+        Err(shell_download::StartError::IoError(e)) => {
+            if is_ci() {
+                panic!("failed to start downloader in CI: {e}");
+            }
+            return;
+        }
     };
 
     let resp = match handle.join() {
         Ok(r) => r,
-        Err(shell_download::Error::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => {
+        Err(shell_download::ResponseError::Start(shell_download::StartError::NoDriverFound)) => {
             if is_ci() {
-                panic!("required tool for {driver:?} not found: {e}");
+                panic!("no downloader available in CI");
             }
             return;
         }
-        Err(shell_download::Error::NoDownloader) => {
+        Err(shell_download::ResponseError::Start(shell_download::StartError::IoError(e))) => {
             if is_ci() {
-                panic!("no downloader available in CI");
+                panic!("failed to start downloader in CI: {e}");
             }
             return;
         }

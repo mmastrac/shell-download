@@ -1,8 +1,8 @@
-use std::path::Path;
 use std::process::Command;
 use std::sync::{Arc, atomic::AtomicBool};
+use std::thread::JoinHandle;
 
-use crate::{Error, Quiet, RequestBuilder, drivers::Driver, util};
+use crate::{Quiet, RequestBuilder, Response, ResponseError, StartError, drivers::Driver, util};
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct PwshDriver;
@@ -11,42 +11,44 @@ pub(crate) struct PwshDriver;
 pub(crate) struct PowerShellDriver;
 
 impl Driver for PwshDriver {
-    fn download(
+    fn start(
         &self,
-        req: &RequestBuilder,
-        out: &Path,
-        cancel: &Arc<AtomicBool>,
-    ) -> Result<(u16, bool), Error> {
-        download_inner(req, out, cancel, true)
+        req: RequestBuilder,
+        target_path: std::path::PathBuf,
+        cancel: Arc<AtomicBool>,
+    ) -> Result<JoinHandle<Result<Response, ResponseError>>, StartError> {
+        start_inner(req, target_path, cancel, true)
     }
 }
 
 impl Driver for PowerShellDriver {
-    fn download(
+    fn start(
         &self,
-        req: &RequestBuilder,
-        out: &Path,
-        cancel: &Arc<AtomicBool>,
-    ) -> Result<(u16, bool), Error> {
-        download_inner(req, out, cancel, false)
+        req: RequestBuilder,
+        target_path: std::path::PathBuf,
+        cancel: Arc<AtomicBool>,
+    ) -> Result<JoinHandle<Result<Response, ResponseError>>, StartError> {
+        start_inner(req, target_path, cancel, false)
     }
 }
 
-fn download_inner(
-    req: &RequestBuilder,
-    out: &Path,
-    cancel: &Arc<AtomicBool>,
+fn start_inner(
+    req: RequestBuilder,
+    target_path: std::path::PathBuf,
+    cancel: Arc<AtomicBool>,
     use_pwsh: bool,
-) -> Result<(u16, bool), Error> {
+) -> Result<JoinHandle<Result<Response, ResponseError>>, StartError> {
     let program: &'static str = if use_pwsh { "pwsh" } else { "powershell" };
 
+    let tmp_path = util::tmp_path_for_target(&target_path);
+
     let mut ps_headers = String::new();
-    for (k, v) in util::add_common_headers(req) {
+    for (k, v) in util::add_common_headers(&req) {
         ps_headers.push_str(&format!("'{}'='{}';", escape_ps(&k), escape_ps(&v)));
     }
     let headers_expr = format!("@{{{ps_headers}}}");
     let url = escape_ps(&req.url);
-    let out_str = escape_ps(&out.to_string_lossy());
+    let out_str = escape_ps(&tmp_path.to_string_lossy());
     let max_redir = if req.follow_redirects { 10 } else { 0 };
 
     let debug = match req.quiet {
@@ -89,12 +91,16 @@ fn download_inner(
         .arg("-Command")
         .arg(script);
 
-    let output = util::run_cancellable_command(cmd, cancel, program, req.quiet)?;
-    let code_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    let code: u16 = code_str
-        .parse()
-        .map_err(|_| Error::BadStatusCode(code_str))?;
-    Ok((code, false))
+    let child = util::spawn_child_for_output(cmd, program)?;
+
+    Ok(util::spawn_request_thread(req, target_path, tmp_path, cancel, move |req, _out, cancel| {
+        let output = util::wait_child_with_output(child, cancel, program, req.quiet)?;
+        let code_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        let code: u16 = code_str
+            .parse()
+            .map_err(|_| ResponseError::BadStatusCode(code_str))?;
+        Ok((code, false))
+    }))
 }
 
 fn escape_ps(s: &str) -> String {

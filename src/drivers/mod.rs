@@ -1,19 +1,19 @@
-use std::path::Path;
+use std::path::PathBuf;
 use std::sync::{Arc, atomic::AtomicBool};
+use std::thread::JoinHandle;
 
-use crate::{Error, RequestBuilder};
+use crate::{RequestBuilder, Response, ResponseError, StartError};
 
 pub(crate) trait Driver {
-    fn download(
+    fn start(
         &self,
-        req: &RequestBuilder,
-        out: &Path,
-        cancel: &Arc<AtomicBool>,
-    ) -> Result<(u16, bool), Error>;
+        req: RequestBuilder,
+        target_path: PathBuf,
+        cancel: Arc<AtomicBool>,
+    ) -> Result<JoinHandle<Result<Response, ResponseError>>, StartError>;
 }
 
 pub(crate) mod curl;
-pub(crate) mod fetch;
 pub(crate) mod openssl;
 pub(crate) mod powershell;
 pub(crate) mod wget;

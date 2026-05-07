@@ -1,45 +1,51 @@
-use std::path::Path;
 use std::process::Command;
 use std::sync::{Arc, atomic::AtomicBool};
+use std::thread::JoinHandle;
 
-use crate::{Error, RequestBuilder, drivers::Driver, util};
+use crate::{RequestBuilder, Response, ResponseError, StartError, drivers::Driver, util};
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct WgetDriver;
 
 impl Driver for WgetDriver {
-    fn download(
+    fn start(
         &self,
-        req: &RequestBuilder,
-        out: &Path,
-        cancel: &Arc<AtomicBool>,
-    ) -> Result<(u16, bool), Error> {
+        req: RequestBuilder,
+        target_path: std::path::PathBuf,
+        cancel: Arc<AtomicBool>,
+    ) -> Result<JoinHandle<Result<Response, ResponseError>>, StartError> {
+        let tmp_path = util::tmp_path_for_target(&target_path);
+
         let mut cmd = Command::new("wget");
         cmd.arg("-O")
-            .arg(out)
+            .arg(&tmp_path)
             .arg("--server-response")
             .arg(&req.url);
         if !req.follow_redirects {
             cmd.arg("--max-redirect=0");
         }
-        for (k, v) in util::add_common_headers(req) {
+        for (k, v) in util::add_common_headers(&req) {
             cmd.arg("--header").arg(format!("{k}: {v}"));
         }
 
-        let output = util::run_cancellable_command(cmd, cancel, "wget", req.quiet)?;
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let mut last_code: Option<u16> = None;
-        for line in stderr.lines() {
-            let line = line.trim();
-            if let Some(rest) = line.strip_prefix("HTTP/") {
-                let parts: Vec<&str> = rest.split_whitespace().collect();
-                if parts.len() >= 2 {
-                    if let Ok(code) = parts[1].parse::<u16>() {
-                        last_code = Some(code);
+        let child = util::spawn_child_for_output(cmd, "wget")?;
+
+        Ok(util::spawn_request_thread(req, target_path, tmp_path, cancel, move |req, _out, cancel| {
+            let output = util::wait_child_with_output(child, cancel, "wget", req.quiet)?;
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let mut last_code: Option<u16> = None;
+            for line in stderr.lines() {
+                let line = line.trim();
+                if let Some(rest) = line.strip_prefix("HTTP/") {
+                    let parts: Vec<&str> = rest.split_whitespace().collect();
+                    if parts.len() >= 2 {
+                        if let Ok(code) = parts[1].parse::<u16>() {
+                            last_code = Some(code);
+                        }
                     }
                 }
             }
-        }
-        Ok((last_code.unwrap_or(200), false))
+            Ok((last_code.unwrap_or(200), false))
+        }))
     }
 }

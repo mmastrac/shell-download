@@ -2,12 +2,12 @@ mod drivers;
 mod util;
 
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
 };
-use std::thread::{self, JoinHandle};
+use std::thread::JoinHandle;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Downloader {
@@ -15,7 +15,6 @@ pub enum Downloader {
     Wget,
     PowerShell,
     Pwsh,
-    Fetch,
     OpenSsl,
 }
 
@@ -69,26 +68,50 @@ impl RequestBuilder {
         self
     }
 
-    pub fn start(self, target_path: impl AsRef<Path>) -> Result<RequestHandle, Error> {
+    pub fn start(self, target_path: impl AsRef<Path>) -> Result<RequestHandle, StartError> {
         let target_path = target_path.as_ref().to_path_buf();
 
         if let Some(parent) = target_path.parent() {
             if !parent.as_os_str().is_empty() {
-                std::fs::create_dir_all(parent).map_err(Error::Io)?;
+                std::fs::create_dir_all(parent).map_err(StartError::IoError)?;
             }
         }
 
         let _ = std::fs::remove_file(&target_path);
 
         let cancel = Arc::new(AtomicBool::new(false));
-        let cancel2 = Arc::clone(&cancel);
+        let mut saw_non_not_found: Option<io::Error> = None;
+        let mut saw_any_not_found = false;
 
-        let join = thread::spawn(move || run_request(self, target_path, cancel2));
+        for d in candidate_downloaders(&self.preferred) {
+            match d.driver().start(self.clone(), target_path.clone(), Arc::clone(&cancel)) {
+                Ok(join) => {
+                    return Ok(RequestHandle {
+                        cancel,
+                        join: Some(join),
+                    });
+                }
+                Err(StartError::NoDriverFound) => {
+                    saw_any_not_found = true;
+                    continue;
+                }
+                Err(StartError::IoError(e)) => {
+                    if saw_non_not_found.is_none() {
+                        saw_non_not_found = Some(e);
+                    }
+                    continue;
+                }
+            }
+        }
 
-        Ok(RequestHandle {
-            cancel,
-            join: Some(join),
-        })
+        if let Some(e) = saw_non_not_found {
+            return Err(StartError::IoError(e));
+        }
+        if saw_any_not_found {
+            return Err(StartError::NoDriverFound);
+        }
+        Err(StartError::NoDriverFound)
+
     }
 }
 
@@ -99,7 +122,6 @@ impl Downloader {
         static PWSH: drivers::powershell::PwshDriver = drivers::powershell::PwshDriver;
         static POWERSHELL: drivers::powershell::PowerShellDriver =
             drivers::powershell::PowerShellDriver;
-        static FETCH: drivers::fetch::FetchDriver = drivers::fetch::FetchDriver;
         static OPENSSL: drivers::openssl::OpenSslDriver = drivers::openssl::OpenSslDriver;
 
         match self {
@@ -107,7 +129,6 @@ impl Downloader {
             Downloader::Wget => &WGET,
             Downloader::Pwsh => &PWSH,
             Downloader::PowerShell => &POWERSHELL,
-            Downloader::Fetch => &FETCH,
             Downloader::OpenSsl => &OPENSSL,
         }
     }
@@ -116,7 +137,7 @@ impl Downloader {
 #[derive(Debug)]
 pub struct RequestHandle {
     cancel: Arc<AtomicBool>,
-    join: Option<JoinHandle<Result<Response, Error>>>,
+    join: Option<JoinHandle<Result<Response, ResponseError>>>,
 }
 
 impl RequestHandle {
@@ -124,10 +145,10 @@ impl RequestHandle {
         self.cancel.store(true, Ordering::SeqCst);
     }
 
-    pub fn join(mut self) -> Result<Response, Error> {
+    pub fn join(mut self) -> Result<Response, ResponseError> {
         match self.join.take().expect("join called once").join() {
             Ok(r) => r,
-            Err(_) => Err(Error::ThreadPanicked),
+            Err(_) => Err(ResponseError::ThreadPanicked),
         }
     }
 }
@@ -138,11 +159,22 @@ pub struct Response {
 }
 
 #[derive(Debug)]
-pub enum Error {
+pub enum StartError {
+    NoDriverFound,
+    IoError(io::Error),
+}
+
+impl From<io::Error> for StartError {
+    fn from(value: io::Error) -> Self {
+        Self::IoError(value)
+    }
+}
+
+#[derive(Debug)]
+pub enum ResponseError {
     Io(io::Error),
     InvalidUrl,
     UnsupportedScheme,
-    NoDownloader,
     Cancelled,
     ThreadPanicked,
     CommandFailed {
@@ -155,81 +187,24 @@ pub enum Error {
         exit_code: Option<i32>,
         stderr: String,
     },
+    Start(StartError),
 }
 
-impl From<io::Error> for Error {
+impl From<io::Error> for ResponseError {
     fn from(value: io::Error) -> Self {
         Self::Io(value)
     }
 }
 
-fn run_request(
-    req: RequestBuilder,
-    target_path: PathBuf,
-    cancel: Arc<AtomicBool>,
-) -> Result<Response, Error> {
-    let downloader = pick_downloader(&req.preferred)?;
-    let driver = downloader.driver();
-
-    let mut tmp = target_path.clone();
-    tmp.set_extension(format!(
-        "{}.tmp",
-        util::unique_suffix().unwrap_or_else(|| "download".into())
-    ));
-    let _ = std::fs::remove_file(&tmp);
-
-    let (status_code, content_encoding_gzip) = driver.download(&req, &tmp, &cancel)?;
-
-    if cancel.load(Ordering::SeqCst) {
-        let _ = std::fs::remove_file(&tmp);
-        return Err(Error::Cancelled);
-    }
-
-    let needs_gunzip = content_encoding_gzip || util::file_looks_gzipped(&tmp).unwrap_or(false);
-    if needs_gunzip {
-        util::gunzip_to_target(&tmp, &target_path)?;
-        let _ = std::fs::remove_file(&tmp);
-    } else {
-        let _ = std::fs::remove_file(&target_path);
-        std::fs::rename(&tmp, &target_path).map_err(Error::Io)?;
-    }
-
-    Ok(Response { status_code })
-}
-
-fn pick_downloader(preferred: &[Downloader]) -> Result<Downloader, Error> {
+fn candidate_downloaders(preferred: &[Downloader]) -> Vec<Downloader> {
     if !preferred.is_empty() {
-        for &d in preferred {
-            if downloader_available(d) {
-                return Ok(d);
-            }
-        }
-        return Err(Error::NoDownloader);
+        return preferred.to_vec();
     }
-
-    for d in [
+    vec![
         Downloader::Curl,
         Downloader::Wget,
         Downloader::Pwsh,
         Downloader::PowerShell,
-        Downloader::Fetch,
         Downloader::OpenSsl,
-    ] {
-        if downloader_available(d) {
-            return Ok(d);
-        }
-    }
-
-    Err(Error::NoDownloader)
-}
-
-fn downloader_available(d: Downloader) -> bool {
-    match d {
-        Downloader::Curl => util::downloader_available("curl"),
-        Downloader::Wget => util::downloader_available("wget"),
-        Downloader::PowerShell => util::downloader_available("powershell"),
-        Downloader::Pwsh => util::downloader_available("pwsh"),
-        Downloader::Fetch => util::downloader_available("fetch"),
-        Downloader::OpenSsl => util::downloader_available("openssl"),
-    }
+    ]
 }
