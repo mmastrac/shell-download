@@ -46,6 +46,24 @@ jobs:
         with:
           toolchain: ${{ matrix.rust-toolchain }}
 
+      - name: Install wget (Windows)
+        if: ${{ runner.os == 'Windows' }}
+        shell: powershell
+        run: |
+          choco install -y wget
+          wget --version
+
+      - name: Install pwsh (Linux, best-effort)
+        if: ${{ runner.os == 'Linux' }}
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          # Ubuntu images may already include pwsh; if not, try installing via apt.
+          # If the package isn't available, continue without failing the job.
+          sudo apt-get install -y powershell || true
+          command -v pwsh >/dev/null 2>&1 && pwsh -NoProfile -NonInteractive -Command '$PSVersionTable.PSVersion' || true
+
       - name: Run tests
         shell: bash
         run: cargo test
