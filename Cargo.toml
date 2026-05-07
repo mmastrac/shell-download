@@ -8,7 +8,7 @@ repository = "https://github.com/mmastrac/shell-download"
 readme = "README.md"
 categories = ["network-programming", "command-line-utilities", "os"]
 rust-version = "1.85"
-description = "Zero-dependency Rust library for downloading a URL to a file using shell tools."
+description = "Zero-dependency Rust library for downloading a remote URL to a file, string or bytes using commonly-available shell tools."
 
 [lib]
 path = "src/lib.rs"
