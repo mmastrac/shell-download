@@ -1,8 +1,7 @@
-use std::path::Path;
 use std::sync::{Arc, atomic::AtomicBool};
 use std::thread::JoinHandle;
 
-use crate::{DownloadResult, RequestBuilder, ResponseError, StartError, drivers::Driver, util};
+use crate::{DownloadResult, DownloadSink, RequestBuilder, ResponseError, StartError, drivers::Driver, util};
 
 #[derive(Debug, Clone, Copy)]
 /// PowerShell (`pwsh`/`powershell`) backend.
@@ -13,10 +12,10 @@ impl Driver for PowerShellDriver {
     fn start(
         &self,
         req: RequestBuilder,
-        out_path: &Path,
+        sink: DownloadSink,
         cancel: Arc<AtomicBool>,
     ) -> Result<JoinHandle<Result<DownloadResult, ResponseError>>, StartError> {
-        start_inner(req, out_path, cancel)
+        start_inner(req, sink, cancel)
     }
 }
 
@@ -73,7 +72,7 @@ exit $exitCode;
 /// Implementation for the PowerShell backend.
 fn start_inner(
     req: RequestBuilder,
-    out_path: &Path,
+    sink: DownloadSink,
     cancel: Arc<AtomicBool>,
 ) -> Result<JoinHandle<Result<DownloadResult, ResponseError>>, StartError> {
     let candidates = find_powershell_candidates();
@@ -112,8 +111,8 @@ fn start_inner(
 
     let mut last_io: Option<std::io::Error> = None;
 
-    let (child, program_label) = {
-        let mut started: Option<(std::process::Child, &'static str)> = None;
+    let (child, program_label, direct_stdout) = {
+        let mut started: Option<(std::process::Child, &'static str, bool)> = None;
         for exe in candidates {
             let mut cmd = std::process::Command::new(exe);
             cmd.arg("-NoProfile")
@@ -123,9 +122,9 @@ fn start_inner(
                 .arg("-Command")
                 .arg(&script);
 
-            match util::spawn_child_for_output(cmd, exe) {
-                Ok(ch) => {
-                    started = Some((ch, exe));
+            match util::spawn_child_for_download(cmd, &sink, exe) {
+                Ok((ch, dir)) => {
+                    started = Some((ch, exe, dir));
                     break;
                 }
                 Err(StartError::NoDriverFound) => {}
@@ -147,15 +146,15 @@ fn start_inner(
         }
     };
 
-    let out_path = out_path.to_path_buf();
     Ok(util::spawn_download_thread(
         req,
-        &out_path,
+        sink,
         cancel,
-        move |req, tmp_path, cancel| {
-            let output = util::wait_child_stream_stdout_to_file(
+        move |req, sink, cancel| {
+            let output = util::wait_child_into_sink(
                 child,
-                tmp_path,
+                sink,
+                direct_stdout,
                 cancel,
                 program_label,
                 req.quiet,

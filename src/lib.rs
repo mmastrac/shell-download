@@ -1,9 +1,12 @@
 #![doc = include_str!("../README.md")]
 
 mod drivers;
+mod sink;
 mod tempfile;
 mod url_parser;
 mod util;
+
+pub use sink::DownloadSink;
 
 use std::io;
 use std::path::{Path, PathBuf};
@@ -166,10 +169,8 @@ impl RequestBuilder {
         let mut saw_any_not_found = false;
 
         for d in candidate_downloaders(&self.preferred) {
-            match d
-                .driver()
-                .start(self.clone(), tmp_path.as_ref(), Arc::clone(&cancel))
-            {
+            let sink = DownloadSink::file(tmp_path.as_ref().to_path_buf());
+            match d.driver().start(self.clone(), sink, Arc::clone(&cancel)) {
                 Ok(join) => {
                     return Ok(RequestHandle {
                         cancel,

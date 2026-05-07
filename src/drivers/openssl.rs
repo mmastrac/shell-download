@@ -1,6 +1,5 @@
 use std::io::{self, Read as _, Write as _};
 use std::net::TcpStream;
-use std::path::Path;
 use std::process::{Command, Stdio};
 use std::sync::{
     Arc,
@@ -8,8 +7,8 @@ use std::sync::{
 };
 
 use crate::{
-    ContentEncoding, DownloadResult, RequestBuilder, ResponseError, StartError, drivers::Driver,
-    url_parser::Url, util,
+    ContentEncoding, DownloadResult, DownloadSink, RequestBuilder, ResponseError, StartError,
+    drivers::Driver, url_parser::Url, util,
 };
 
 type HttpResponseParts = (u16, Vec<(String, String)>, Vec<u8>);
@@ -23,7 +22,7 @@ impl Driver for OpenSslDriver {
     fn start(
         &self,
         req: RequestBuilder,
-        out_path: &Path,
+        sink: DownloadSink,
         cancel: Arc<AtomicBool>,
     ) -> Result<std::thread::JoinHandle<Result<DownloadResult, ResponseError>>, StartError> {
         // If we can determine upfront that this request begins with https://, try to spawn
@@ -48,19 +47,14 @@ impl Driver for OpenSslDriver {
             }
         }
 
-        Ok(util::spawn_download_thread(
-            req,
-            out_path,
-            cancel,
-            download_inner,
-        ))
+        Ok(util::spawn_download_thread(req, sink, cancel, download_inner))
     }
 }
 
 /// Perform a download, handling redirects and basic decoding.
 fn download_inner(
     req: &RequestBuilder,
-    out: &Path,
+    sink: &DownloadSink,
     cancel: &Arc<AtomicBool>,
 ) -> Result<(u16, Option<ContentEncoding>), ResponseError> {
     let mut current_url = req.url.clone();
@@ -106,7 +100,7 @@ fn download_inner(
             body
         };
 
-        std::fs::write(out, &body).map_err(ResponseError::Io)?;
+        sink.write_all_body(&body).map_err(ResponseError::Io)?;
         return Ok((status_code, content_encoding));
     }
 }

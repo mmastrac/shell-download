@@ -1,9 +1,8 @@
-use std::path::Path;
 use std::process::Command;
 use std::sync::{Arc, atomic::AtomicBool};
 use std::thread::JoinHandle;
 
-use crate::{DownloadResult, RequestBuilder, ResponseError, StartError, drivers::Driver, util};
+use crate::{DownloadResult, DownloadSink, RequestBuilder, ResponseError, StartError, drivers::Driver, util};
 
 #[derive(Debug, Clone, Copy)]
 /// `wget` backend.
@@ -14,7 +13,7 @@ impl Driver for WgetDriver {
     fn start(
         &self,
         req: RequestBuilder,
-        out_path: &Path,
+        sink: DownloadSink,
         cancel: Arc<AtomicBool>,
     ) -> Result<JoinHandle<Result<DownloadResult, ResponseError>>, StartError> {
         let mut cmd = Command::new("wget");
@@ -35,15 +34,21 @@ impl Driver for WgetDriver {
             cmd.arg("--header").arg(format!("{k}: {v}"));
         }
 
-        let child = util::spawn_child_for_output(cmd, "wget")?;
+        let (child, direct_stdout) = util::spawn_child_for_download(cmd, &sink, "wget")?;
 
         Ok(util::spawn_download_thread(
             req,
-            out_path,
+            sink,
             cancel,
-            move |req, out, cancel| {
-                let output =
-                    util::wait_child_stream_stdout_to_file(child, out, cancel, "wget", req.quiet)?;
+            move |req, _sink, cancel| {
+                let output = util::wait_child_into_sink(
+                    child,
+                    _sink,
+                    direct_stdout,
+                    cancel,
+                    "wget",
+                    req.quiet,
+                )?;
                 let stderr = String::from_utf8_lossy(&output.stderr);
                 let mut last_code: Option<u16> = None;
                 for line in stderr.lines() {

@@ -1,8 +1,7 @@
-use std::path::Path;
 use std::sync::{Arc, atomic::AtomicBool};
 use std::thread::JoinHandle;
 
-use crate::{DownloadResult, RequestBuilder, ResponseError, StartError};
+use crate::{DownloadResult, RequestBuilder, ResponseError, StartError, DownloadSink};
 
 /// Backend driver interface.
 pub(crate) trait Driver {
@@ -10,7 +9,7 @@ pub(crate) trait Driver {
     fn start(
         &self,
         req: RequestBuilder,
-        out_path: &Path,
+        sink: DownloadSink,
         cancel: Arc<AtomicBool>,
     ) -> Result<JoinHandle<Result<DownloadResult, ResponseError>>, StartError>;
 }

@@ -7,7 +7,9 @@ use std::thread;
 use std::thread::JoinHandle;
 use std::time::Duration;
 
-use crate::{ContentEncoding, DownloadResult, Quiet, RequestBuilder, ResponseError, StartError};
+use crate::{
+    ContentEncoding, DownloadResult, DownloadSink, Quiet, RequestBuilder, ResponseError, StartError,
+};
 
 /// Ensure common headers are present (notably gzip support).
 pub(crate) fn add_common_headers(req: &RequestBuilder) -> Vec<(String, String)> {
@@ -21,16 +23,16 @@ pub(crate) fn add_common_headers(req: &RequestBuilder) -> Vec<(String, String)> 
     headers
 }
 
-/// Spawn a child process with captured stdout/stderr.
-pub(crate) fn spawn_child_for_output(
-    mut cmd: Command,
+/// Spawn a download child: stdin null, stderr piped, stdout per [`DownloadSink::attach_stdout`].
+pub(crate) fn spawn_child_for_download(
+    cmd: Command,
+    sink: &DownloadSink,
     _program: &'static str,
-) -> Result<Child, StartError> {
-    cmd.stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
+) -> Result<(Child, bool), StartError> {
+    let mut cmd = cmd;
+    let direct_stdout = sink.attach_stdout(&mut cmd).map_err(StartError::IoError)?;
     match cmd.spawn() {
-        Ok(c) => Ok(c),
+        Ok(c) => Ok((c, direct_stdout)),
         Err(e) if e.kind() == io::ErrorKind::NotFound => Err(StartError::NoDriverFound),
         Err(e) => Err(StartError::IoError(e)),
     }
@@ -81,32 +83,15 @@ pub(crate) fn find_program_in_path(program: &str) -> Vec<PathBuf> {
     out
 }
 
-/// Second write handle for the download temp file while [`crate::tempfile::TmpFile`] may still own one.
-pub(crate) fn open_tmp_for_body_stream(path: &Path) -> io::Result<std::fs::File> {
-    let mut opts = std::fs::OpenOptions::new();
-    opts.write(true);
-    #[cfg(windows)]
-    {
-        use std::os::windows::fs::OpenOptionsExt as _;
-        const FILE_SHARE_READ: u32 = 0x00000001;
-        const FILE_SHARE_WRITE: u32 = 0x00000002;
-        opts.share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE);
-    }
-    opts.open(path)
-}
-
-/// Wait for a child: stream stdout into `body_path`, buffer stderr (cancellation and quiet match prior behavior).
-pub(crate) fn wait_child_stream_stdout_to_file(
+/// Wait for a download child: body lands in `sink` (direct file or piped drain), stderr buffered.
+pub(crate) fn wait_child_into_sink(
     mut child: Child,
-    body_path: &Path,
+    sink: &DownloadSink,
+    stdout_direct_to_file: bool,
     cancel: &Arc<AtomicBool>,
     program: &'static str,
     quiet: Quiet,
 ) -> Result<std::process::Output, ResponseError> {
-    let mut stdout = child
-        .stdout
-        .take()
-        .ok_or_else(|| ResponseError::Io(io::Error::other("missing child stdout")))?;
     let mut stderr_pipe = child
         .stderr
         .take()
@@ -118,24 +103,34 @@ pub(crate) fn wait_child_stream_stdout_to_file(
         buf
     });
 
-    let mut body_file = open_tmp_for_body_stream(body_path).map_err(ResponseError::Io)?;
-    let copy_handle = thread::spawn(move || io::copy(&mut stdout, &mut body_file));
+    let copy_handle = if stdout_direct_to_file {
+        None
+    } else {
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| ResponseError::Io(io::Error::other("missing child stdout")))?;
+        Some(sink.clone().drain_piped_stdout(stdout))
+    };
 
     loop {
         if cancel.load(Ordering::SeqCst) {
             let _ = child.kill();
             let _ = child.wait();
-            let _ = copy_handle.join();
+            if let Some(h) = copy_handle {
+                let _ = h.join();
+            }
             let _ = stderr_handle.join();
             return Err(ResponseError::Cancelled);
         }
 
         match child.try_wait() {
             Ok(Some(status)) => {
-                copy_handle
-                    .join()
-                    .map_err(|_| ResponseError::ThreadPanicked)?
-                    .map_err(ResponseError::Io)?;
+                if let Some(h) = copy_handle {
+                    h.join()
+                        .map_err(|_| ResponseError::ThreadPanicked)?
+                        .map_err(ResponseError::Io)?;
+                }
 
                 let stderr_bytes = stderr_handle
                     .join()
@@ -171,7 +166,7 @@ pub(crate) fn wait_child_stream_stdout_to_file(
 /// Spawn a worker thread that runs a backend download function.
 pub(crate) fn spawn_download_thread<F>(
     req: RequestBuilder,
-    out_path: impl AsRef<Path>,
+    sink: DownloadSink,
     cancel: Arc<AtomicBool>,
     download_to_tmp: F,
 ) -> JoinHandle<Result<DownloadResult, ResponseError>>
@@ -180,16 +175,15 @@ where
         + 'static
         + FnOnce(
             &RequestBuilder,
-            &Path,
+            &DownloadSink,
             &Arc<AtomicBool>,
         ) -> Result<(u16, Option<ContentEncoding>), ResponseError>,
 {
-    let out_path = out_path.as_ref().to_path_buf();
     thread::spawn(move || {
-        let (status_code, content_encoding) = download_to_tmp(&req, &out_path, &cancel)?;
+        let (status_code, content_encoding) = download_to_tmp(&req, &sink, &cancel)?;
 
         if cancel.load(Ordering::SeqCst) {
-            let _ = std::fs::remove_file(&out_path);
+            sink.cleanup_on_cancel();
             return Err(ResponseError::Cancelled);
         }
 
