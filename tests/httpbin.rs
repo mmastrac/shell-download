@@ -2,25 +2,30 @@ use std::path::PathBuf;
 
 #[test]
 fn fetch_httpbin_redirect_curl() {
-    fetch_httpbin_redirect(shell_download::Downloader::Curl);
+    httpbin_test(shell_download::Downloader::Curl);
 }
 
 #[test]
 fn fetch_httpbin_redirect_wget() {
-    fetch_httpbin_redirect(shell_download::Downloader::Wget);
+    httpbin_test(shell_download::Downloader::Wget);
 }
 
 #[test]
 fn fetch_httpbin_redirect_powershell() {
-    fetch_httpbin_redirect(shell_download::Downloader::PowerShell);
+    httpbin_test(shell_download::Downloader::PowerShell);
 }
 
 #[test]
 fn fetch_httpbin_redirect_openssl() {
-    fetch_httpbin_redirect(shell_download::Downloader::OpenSsl);
+    httpbin_test(shell_download::Downloader::OpenSsl);
 }
 
-fn fetch_httpbin_redirect(driver: shell_download::Downloader) {
+fn httpbin_test(driver: shell_download::Downloader) {
+    httpbin_test_redirect(driver);
+    httpbin_test_get_tough_chars(driver);
+}
+
+fn httpbin_test_redirect(driver: shell_download::Downloader) {
     let url = "https://httpbin.org/redirect/5";
     let Some(body) = fetch_httpbin(driver, url.to_string()) else {
         return;
@@ -28,6 +33,19 @@ fn fetch_httpbin_redirect(driver: shell_download::Downloader) {
 
     assert!(
         body.contains("\"url\": \"https://httpbin.org/get\""),
+        "body did not look like final /get response; got prefix: {:?}",
+        body.chars().take(250).collect::<String>()
+    );
+}
+
+fn httpbin_test_get_tough_chars(driver: shell_download::Downloader) {
+    let url = r#"https://httpbin.org/anything/foo$%25?!&1%22%27\"#;
+    let Some(body) = fetch_httpbin(driver, url.to_string()) else {
+        return;
+    };
+
+    assert!(
+        body.contains(r#""url": "https://httpbin.org/anything/foo$%25?!&1\"'\\""#),
         "body did not look like final /get response; got prefix: {:?}",
         body.chars().take(250).collect::<String>()
     );
