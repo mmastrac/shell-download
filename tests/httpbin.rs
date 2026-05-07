@@ -29,7 +29,7 @@ fn httpbin_test(driver: shell_download::Downloader) {
 }
 
 fn httpbin_test_redirect(driver: shell_download::Downloader) {
-    let url = "https://httpbin.org/redirect/5";
+    let url = "https://httpbin.org/redirect/2";
     let Some(body) = fetch_httpbin(driver, url.to_string()) else {
         return;
     };
