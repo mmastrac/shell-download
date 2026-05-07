@@ -2,7 +2,7 @@ use std::process::Command;
 use std::sync::{Arc, atomic::AtomicBool};
 use std::thread::JoinHandle;
 
-use crate::{RequestBuilder, Response, ResponseError, StartError, drivers::Driver, util};
+use crate::{DownloadResult, RequestBuilder, ResponseError, StartError, drivers::Driver, util};
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct WgetDriver;
@@ -11,14 +11,12 @@ impl Driver for WgetDriver {
     fn start(
         &self,
         req: RequestBuilder,
-        target_path: std::path::PathBuf,
+        out_path: std::path::PathBuf,
         cancel: Arc<AtomicBool>,
-    ) -> Result<JoinHandle<Result<Response, ResponseError>>, StartError> {
-        let tmp_path = util::tmp_path_for_target(&target_path);
-
+    ) -> Result<JoinHandle<Result<DownloadResult, ResponseError>>, StartError> {
         let mut cmd = Command::new("wget");
         cmd.arg("-O")
-            .arg(&tmp_path)
+            .arg(&out_path)
             .arg("--server-response")
             .arg(&req.url);
         if !req.follow_redirects {
@@ -30,10 +28,9 @@ impl Driver for WgetDriver {
 
         let child = util::spawn_child_for_output(cmd, "wget")?;
 
-        Ok(util::spawn_request_thread(
+        Ok(util::spawn_download_thread(
             req,
-            target_path,
-            tmp_path,
+            out_path,
             cancel,
             move |req, _out, cancel| {
                 let output = util::wait_child_with_output(child, cancel, "wget", req.quiet)?;

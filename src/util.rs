@@ -9,7 +9,7 @@ use std::thread;
 use std::thread::JoinHandle;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use crate::{Quiet, RequestBuilder, Response, ResponseError, StartError};
+use crate::{DownloadResult, Quiet, RequestBuilder, ResponseError, StartError};
 
 pub(crate) fn unique_suffix() -> Option<String> {
     let now = SystemTime::now()
@@ -133,31 +133,29 @@ pub(crate) fn wait_child_with_output(
     Ok(output)
 }
 
-pub(crate) fn spawn_request_thread<F>(
+pub(crate) fn spawn_download_thread<F>(
     req: RequestBuilder,
-    target_path: PathBuf,
-    tmp_path: PathBuf,
+    out_path: PathBuf,
     cancel: Arc<AtomicBool>,
     download_to_tmp: F,
-) -> JoinHandle<Result<Response, ResponseError>>
+) -> JoinHandle<Result<DownloadResult, ResponseError>>
 where
     F: Send
         + 'static
         + FnOnce(&RequestBuilder, &Path, &Arc<AtomicBool>) -> Result<(u16, bool), ResponseError>,
 {
     thread::spawn(move || {
-        let _ = std::fs::remove_file(&tmp_path);
-
-        let (status_code, content_encoding_gzip) = download_to_tmp(&req, &tmp_path, &cancel)?;
+        let (status_code, content_encoding_gzip) = download_to_tmp(&req, &out_path, &cancel)?;
 
         if cancel.load(Ordering::SeqCst) {
-            let _ = std::fs::remove_file(&tmp_path);
+            let _ = std::fs::remove_file(&out_path);
             return Err(ResponseError::Cancelled);
         }
 
-        finalize_download(&tmp_path, &target_path, content_encoding_gzip)?;
-
-        Ok(Response { status_code })
+        Ok(DownloadResult {
+            status_code,
+            content_encoding_gzip,
+        })
     })
 }
 

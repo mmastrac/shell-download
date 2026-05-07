@@ -37,6 +37,12 @@ pub struct RequestBuilder {
     pub(crate) quiet: Quiet,
 }
 
+#[derive(Debug, Clone)]
+pub struct DownloadResult {
+    pub status_code: u16,
+    pub content_encoding_gzip: bool,
+}
+
 impl RequestBuilder {
     pub fn new(url: impl Into<String>) -> Self {
         Self {
@@ -82,6 +88,9 @@ impl RequestBuilder {
         // URL preflight: fail early with a message useful to callers.
         url_parser::Url::new(&self.url).map_err(|e| StartError::Url(e.to_string()))?;
 
+        let tmp_path = util::tmp_path_for_target(&target_path);
+        let _ = std::fs::remove_file(&tmp_path);
+
         let cancel = Arc::new(AtomicBool::new(false));
         let mut saw_non_not_found: Option<io::Error> = None;
         let mut saw_any_not_found = false;
@@ -89,12 +98,14 @@ impl RequestBuilder {
         for d in candidate_downloaders(&self.preferred) {
             match d
                 .driver()
-                .start(self.clone(), target_path.clone(), Arc::clone(&cancel))
+                .start(self.clone(), tmp_path.clone(), Arc::clone(&cancel))
             {
                 Ok(join) => {
                     return Ok(RequestHandle {
                         cancel,
                         join: Some(join),
+                        target_path,
+                        tmp_path,
                     });
                 }
                 Err(StartError::NoDriverFound) => {
@@ -141,7 +152,9 @@ impl Downloader {
 #[derive(Debug)]
 pub struct RequestHandle {
     cancel: Arc<AtomicBool>,
-    join: Option<JoinHandle<Result<Response, ResponseError>>>,
+    join: Option<JoinHandle<Result<DownloadResult, ResponseError>>>,
+    target_path: std::path::PathBuf,
+    tmp_path: std::path::PathBuf,
 }
 
 impl RequestHandle {
@@ -150,9 +163,23 @@ impl RequestHandle {
     }
 
     pub fn join(mut self) -> Result<Response, ResponseError> {
-        match self.join.take().expect("join called once").join() {
+        let res = match self.join.take().expect("join called once").join() {
             Ok(r) => r,
             Err(_) => Err(ResponseError::ThreadPanicked),
+        }?;
+
+        util::finalize_download(&self.tmp_path, &self.target_path, res.content_encoding_gzip)?;
+        Ok(Response {
+            status_code: res.status_code,
+        })
+    }
+}
+
+impl Drop for RequestHandle {
+    fn drop(&mut self) {
+        if self.join.is_some() {
+            self.cancel.store(true, Ordering::SeqCst);
+            let _ = std::fs::remove_file(&self.tmp_path);
         }
     }
 }

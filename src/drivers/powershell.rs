@@ -2,7 +2,7 @@ use std::process::Command;
 use std::sync::{Arc, atomic::AtomicBool};
 use std::thread::JoinHandle;
 
-use crate::{RequestBuilder, Response, ResponseError, StartError, drivers::Driver, util};
+use crate::{DownloadResult, RequestBuilder, ResponseError, StartError, drivers::Driver, util};
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct PowerShellDriver;
@@ -11,24 +11,22 @@ impl Driver for PowerShellDriver {
     fn start(
         &self,
         req: RequestBuilder,
-        target_path: std::path::PathBuf,
+        out_path: std::path::PathBuf,
         cancel: Arc<AtomicBool>,
-    ) -> Result<JoinHandle<Result<Response, ResponseError>>, StartError> {
-        start_inner(req, target_path, cancel)
+    ) -> Result<JoinHandle<Result<DownloadResult, ResponseError>>, StartError> {
+        start_inner(req, out_path, cancel)
     }
 }
 
 fn start_inner(
     req: RequestBuilder,
-    target_path: std::path::PathBuf,
+    out_path: std::path::PathBuf,
     cancel: Arc<AtomicBool>,
-) -> Result<JoinHandle<Result<Response, ResponseError>>, StartError> {
+) -> Result<JoinHandle<Result<DownloadResult, ResponseError>>, StartError> {
     let candidates = find_powershell_candidates();
     if candidates.is_empty() {
         return Err(StartError::NoDriverFound);
     }
-
-    let tmp_path = util::tmp_path_for_target(&target_path);
 
     let mut ps_headers = String::new();
     for (k, v) in util::add_common_headers(&req) {
@@ -36,7 +34,7 @@ fn start_inner(
     }
     let headers_expr = format!("@{{{ps_headers}}}");
     let url = escape_ps(&req.url);
-    let out_str = escape_ps(&tmp_path.to_string_lossy());
+    let out_str = escape_ps(&out_path.to_string_lossy());
     let max_redir = if req.follow_redirects { 10 } else { 0 };
 
     let script = |use_basic_parsing: bool| {
@@ -113,10 +111,9 @@ fn start_inner(
         }
     };
 
-    Ok(util::spawn_request_thread(
+    Ok(util::spawn_download_thread(
         req,
-        target_path,
-        tmp_path,
+        out_path,
         cancel,
         move |req, _out, cancel| {
             let output = util::wait_child_with_output(child, cancel, program_label, req.quiet)?;

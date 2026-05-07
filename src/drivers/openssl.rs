@@ -8,7 +8,8 @@ use std::sync::{
 };
 
 use crate::{
-    RequestBuilder, Response, ResponseError, StartError, drivers::Driver, url_parser::Url, util,
+    DownloadResult, RequestBuilder, ResponseError, StartError, drivers::Driver, url_parser::Url,
+    util,
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -18,11 +19,9 @@ impl Driver for OpenSslDriver {
     fn start(
         &self,
         req: RequestBuilder,
-        target_path: std::path::PathBuf,
+        out_path: std::path::PathBuf,
         cancel: Arc<AtomicBool>,
-    ) -> Result<std::thread::JoinHandle<Result<Response, ResponseError>>, StartError> {
-        let tmp_path = util::tmp_path_for_target(&target_path);
-
+    ) -> Result<std::thread::JoinHandle<Result<DownloadResult, ResponseError>>, StartError> {
         // If we can determine upfront that this request begins with https://, try to spawn
         // `openssl` now so that "command not found" becomes a StartError.
         if let Ok(parsed) = Url::new(&req.url) {
@@ -45,10 +44,9 @@ impl Driver for OpenSslDriver {
             }
         }
 
-        Ok(util::spawn_request_thread(
+        Ok(util::spawn_download_thread(
             req,
-            target_path,
-            tmp_path,
+            out_path,
             cancel,
             move |req, out, cancel| download_inner(req, out, cancel),
         ))
