@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::Path;
 use std::sync::{Arc, atomic::AtomicBool};
 use std::thread::JoinHandle;
 
@@ -10,7 +10,7 @@ pub(crate) trait Driver {
     fn start(
         &self,
         req: RequestBuilder,
-        out_path: PathBuf,
+        out_path: &Path,
         cancel: Arc<AtomicBool>,
     ) -> Result<JoinHandle<Result<DownloadResult, ResponseError>>, StartError>;
 }

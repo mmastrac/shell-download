@@ -1,6 +1,7 @@
 #![doc = include_str!("../README.md")]
 
 mod drivers;
+mod tempfile;
 mod url_parser;
 mod util;
 
@@ -102,22 +103,24 @@ impl RequestBuilder {
 
     /// Fetch the response body as a String, blocking until the download is
     /// complete.
-    #[cfg(feature = "in-memory")]
     pub fn fetch_string(self) -> Result<String, ResponseError> {
-        let tmp_file = tempfile::NamedTempFile::new()?;
-        let handle = self.start(tmp_file.path()).map_err(ResponseError::Start)?;
-        let _res = handle.join()?;
-        std::fs::read_to_string(tmp_file.path()).map_err(ResponseError::Io)
+        String::from_utf8(self.fetch_bytes()?)
+            .map_err(|e| ResponseError::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, e)))
     }
 
     /// Fetch the response body as a String, blocking until the download is
     /// complete.
-    #[cfg(feature = "in-memory")]
     pub fn fetch_bytes(self) -> Result<Vec<u8>, ResponseError> {
-        let tmp_file = tempfile::NamedTempFile::new()?;
-        let handle = self.start(tmp_file.path()).map_err(ResponseError::Start)?;
+        let tmp = crate::tempfile::create_tmp_file_in_path(
+            "in-memory",
+            None,
+            &std::env::temp_dir(),
+            "shell-download-in-memory",
+        )
+        .map_err(ResponseError::Io)?;
+        let handle = self.start(&tmp).map_err(ResponseError::Start)?;
         let _res = handle.join()?;
-        std::fs::read(tmp_file.path()).map_err(ResponseError::Io)
+        std::fs::read(tmp).map_err(ResponseError::Io)
     }
 
     /// Start the download in a background thread.
@@ -135,8 +138,14 @@ impl RequestBuilder {
         // URL preflight: fail early with a message useful to callers.
         let url = url_parser::Url::new(&self.url).map_err(|e| StartError::Url(e.to_string()))?;
 
+        let parent = target_path.parent().unwrap_or_else(|| Path::new("."));
+        let hint = target_path
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("download");
         let tmp_path =
-            util::create_tmp_file_for_target(&url, &target_path).map_err(StartError::IoError)?;
+            crate::tempfile::create_tmp_file_in_path("download", Some(&url), parent, hint)
+                .map_err(StartError::IoError)?;
 
         let cancel = Arc::new(AtomicBool::new(false));
         let mut saw_non_not_found: Option<io::Error> = None;
@@ -145,14 +154,14 @@ impl RequestBuilder {
         for d in candidate_downloaders(&self.preferred) {
             match d
                 .driver()
-                .start(self.clone(), tmp_path.clone(), Arc::clone(&cancel))
+                .start(self.clone(), tmp_path.as_ref(), Arc::clone(&cancel))
             {
                 Ok(join) => {
                     return Ok(RequestHandle {
                         cancel,
                         join: Some(join),
                         target_path,
-                        tmp_path,
+                        tmp_path: Some(tmp_path),
                     });
                 }
                 Err(StartError::NoDriverFound) => {
@@ -204,7 +213,7 @@ pub struct RequestHandle {
     cancel: Arc<AtomicBool>,
     join: Option<JoinHandle<Result<DownloadResult, ResponseError>>>,
     target_path: std::path::PathBuf,
-    tmp_path: std::path::PathBuf,
+    tmp_path: Option<crate::tempfile::TmpFile>,
 }
 
 impl RequestHandle {
@@ -220,7 +229,8 @@ impl RequestHandle {
             Err(_) => Err(ResponseError::ThreadPanicked),
         }?;
 
-        util::finalize_download(&self.tmp_path, &self.target_path, res.content_encoding)?;
+        let tmp_path = self.tmp_path.take().expect("tmp_path present");
+        util::finalize_download(tmp_path, &self.target_path, res.content_encoding)?;
         Ok(Response {
             status_code: res.status_code,
         })
@@ -231,7 +241,7 @@ impl Drop for RequestHandle {
     fn drop(&mut self) {
         if self.join.is_some() {
             self.cancel.store(true, Ordering::SeqCst);
-            let _ = std::fs::remove_file(&self.tmp_path);
+            // `tmp_path` will clean itself up via `Drop`.
         }
     }
 }

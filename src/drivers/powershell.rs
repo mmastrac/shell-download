@@ -1,3 +1,4 @@
+use std::path::Path;
 use std::process::Command;
 use std::sync::{Arc, atomic::AtomicBool};
 use std::thread::JoinHandle;
@@ -13,7 +14,7 @@ impl Driver for PowerShellDriver {
     fn start(
         &self,
         req: RequestBuilder,
-        out_path: std::path::PathBuf,
+        out_path: &Path,
         cancel: Arc<AtomicBool>,
     ) -> Result<JoinHandle<Result<DownloadResult, ResponseError>>, StartError> {
         start_inner(req, out_path, cancel)
@@ -23,7 +24,7 @@ impl Driver for PowerShellDriver {
 /// Implementation for the PowerShell backend.
 fn start_inner(
     req: RequestBuilder,
-    out_path: std::path::PathBuf,
+    out_path: &Path,
     cancel: Arc<AtomicBool>,
 ) -> Result<JoinHandle<Result<DownloadResult, ResponseError>>, StartError> {
     let candidates = find_powershell_candidates();

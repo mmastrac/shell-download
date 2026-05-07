@@ -16,7 +16,7 @@ path = "src/lib.rs"
 [features]
 default = []
 url = ["dep:url"]
-in-memory = ["dep:tempfile"]
+tempfile = ["dep:tempfile"]
 
 [dependencies]
 url = { version = "2.5", optional = true, default-features = false }

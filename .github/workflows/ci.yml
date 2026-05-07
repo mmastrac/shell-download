@@ -64,10 +64,14 @@ jobs:
           sudo apt-get install -y powershell || true
           command -v pwsh >/dev/null 2>&1 && pwsh -NoProfile -NonInteractive -Command '$PSVersionTable.PSVersion' || true
 
-      - name: Run tests
+      - name: Run tests (default features)
         shell: bash
         run: cargo test
 
       - name: Run tests (all features)
         shell: bash
         run: cargo test --all-features
+
+      - name: Run tests (no features)
+        shell: bash
+        run: cargo test --no-default-features

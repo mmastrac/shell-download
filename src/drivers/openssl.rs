@@ -23,7 +23,7 @@ impl Driver for OpenSslDriver {
     fn start(
         &self,
         req: RequestBuilder,
-        out_path: std::path::PathBuf,
+        out_path: &Path,
         cancel: Arc<AtomicBool>,
     ) -> Result<std::thread::JoinHandle<Result<DownloadResult, ResponseError>>, StartError> {
         // If we can determine upfront that this request begins with https://, try to spawn

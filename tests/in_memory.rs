@@ -1,5 +1,3 @@
-#![cfg(feature = "in-memory")]
-
 use shell_download::RequestBuilder;
 
 #[test]

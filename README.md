@@ -5,7 +5,9 @@
 | `shell-download`     | [![docs.rs](https://docs.rs/shell-download/badge.svg)](https://docs.rs/shell-download)           | [![crates.io](https://img.shields.io/crates/v/shell-download.svg)](https://crates.io/crates/shell-download)       |
 
 A zero-dependency Rust library for downloading a URL to a file by delegating to
-whatever download tools are available on the current system.
+whatever download tools are available on the current system. <sup>❡</sup>
+
+<sup>❡</sup> By default, `tempfile` is enabled for secure temporary file creation. Disable it with `default-features = false`.
 
 It hunts for (in order): `curl`, `wget`, `pwsh`/`powershell`, `python3`, and
 finally `openssl` (HTTPS via `openssl s_client`, HTTP via a raw TCP GET).
@@ -21,8 +23,8 @@ By default, these features are not enabled, making the crate zero-dependency.
 
  - `url`: Parse URLs using the `url` crate (adds a number of dependencies, but
    makes URL parsing more accurate).
- - `in-memory`: Receive the response body as a String or Vec<u8> instead of
-   requiring a path. Uses the `tempfile` crate.
+- `tempfile`: Use the `tempfile` crate to create temporary files. This is
+  recommended.
 
 ## Usage
 
