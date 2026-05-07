@@ -123,7 +123,7 @@ fn get_http_via_tcp(
 
     let mut request = String::new();
     request.push_str(&format!("GET {path} HTTP/1.1\r\n"));
-    request.push_str(&format!("Host: {host}\r\n"));
+    request.push_str(&format!("Host: {}\r\n", url.authority()));
     request.push_str("Connection: close\r\n");
     for (k, v) in util::add_common_headers(req) {
         request.push_str(&format!("{k}: {v}\r\n"));
@@ -167,7 +167,7 @@ fn get_https_via_openssl(
 
     let mut request = String::new();
     request.push_str(&format!("GET {path} HTTP/1.1\r\n"));
-    request.push_str(&format!("Host: {host}\r\n"));
+    request.push_str(&format!("Host: {}\r\n", url.authority()));
     request.push_str("Connection: close\r\n");
     for (k, v) in util::add_common_headers(req) {
         request.push_str(&format!("{k}: {v}\r\n"));
