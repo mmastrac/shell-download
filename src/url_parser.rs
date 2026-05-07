@@ -1,7 +1,7 @@
 /// Parsed URL components used by the built-in downloader.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Url {
-    /// URL scheme (lowercased when parsed without the `url` feature).
+    /// URL scheme (normalized to lowercase).
     pub scheme: String,
     /// Host name.
     pub host: String,
@@ -18,7 +18,14 @@ pub struct Url {
 impl Url {
     /// Parse a URL string.
     pub fn new(url: &str) -> Result<Self, Error> {
-        parse_url(url).map_err(Error::Parse)
+        #[cfg(feature = "url")]
+        {
+            parse_url_crate(url).map_err(Error::Parse)
+        }
+        #[cfg(not(feature = "url"))]
+        {
+            parse_url_builtin(url).map_err(Error::Parse)
+        }
     }
 
     /// Return the path plus query, if present.
@@ -64,8 +71,7 @@ impl std::fmt::Display for Error {
 impl std::error::Error for Error {}
 
 #[cfg(feature = "url")]
-/// Parse using the `url` crate when enabled.
-fn parse_url(input: &str) -> Result<Url, String> {
+fn parse_url_crate(input: &str) -> Result<Url, String> {
     let u = url::Url::parse(input).map_err(|e| e.to_string())?;
     let scheme = u.scheme().to_string();
     let host = u
@@ -95,11 +101,9 @@ fn parse_url(input: &str) -> Result<Url, String> {
     })
 }
 
-#[cfg(not(feature = "url"))]
-/// Parse a URL using a small built-in parser.
-fn parse_url(input: &str) -> Result<Url, String> {
-    // Very small, best-effort parser:
-    // scheme://host[:port]/path?query#fragment
+/// Built-in parser (always compiled; used by [`Url::new`] unless the `url` feature is on).
+fn parse_url_builtin(input: &str) -> Result<Url, String> {
+    // scheme://[userinfo@]host[:port]/path?query#fragment
     let input = input.trim();
     let (scheme, rest) = input
         .split_once("://")
@@ -108,41 +112,33 @@ fn parse_url(input: &str) -> Result<Url, String> {
         return Err("empty scheme".to_string());
     }
 
-    let mut rest = rest;
-
-    // fragment
-    let (rest2, fragment) = match rest.split_once('#') {
+    let (rest, fragment) = match rest.split_once('#') {
         Some((a, b)) => (a, Some(b.to_string())),
         None => (rest, None),
     };
-    rest = rest2;
 
-    // query
-    let (rest3, query) = match rest.split_once('?') {
+    let (rest, query) = match rest.split_once('?') {
         Some((a, b)) => (a, Some(b.to_string())),
         None => (rest, None),
     };
-    rest = rest3;
 
-    // host[:port] + path
-    let (hostport, path) = match rest.split_once('/') {
-        Some((hp, p)) => (hp, format!("/{}", p)),
-        None => (rest, "/".to_string()),
+    let split = find_authority_path_split(rest)?;
+    let authority_raw = &rest[..split];
+    let mut path = if split < rest.len() {
+        rest[split..].to_string()
+    } else {
+        "/".to_string()
     };
-    if hostport.is_empty() {
+    if path.is_empty() {
+        path = "/".to_string();
+    }
+
+    let authority = strip_userinfo(authority_raw);
+    if authority.is_empty() {
         return Err("missing host".to_string());
     }
 
-    let (host, port) = if let Some((h, p)) = hostport.rsplit_once(':') {
-        if !h.is_empty() && !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()) {
-            let port: u16 = p.parse().map_err(|_| "invalid port".to_string())?;
-            (h.to_string(), Some(port))
-        } else {
-            (hostport.to_string(), None)
-        }
-    } else {
-        (hostport.to_string(), None)
-    };
+    let (host, port) = parse_host_port(authority)?;
 
     Ok(Url {
         scheme: scheme.to_ascii_lowercase(),
@@ -152,4 +148,131 @@ fn parse_url(input: &str) -> Result<Url, String> {
         query,
         fragment,
     })
+}
+
+fn strip_userinfo(authority: &str) -> &str {
+    authority.rsplit_once('@').map(|(_, h)| h).unwrap_or(authority)
+}
+
+fn find_authority_path_split(s: &str) -> Result<usize, String> {
+    let bytes = s.as_bytes();
+    let mut i = 0usize;
+    if bytes.first() == Some(&b'[') {
+        while i < bytes.len() && bytes[i] != b']' {
+            i += 1;
+        }
+        if i >= bytes.len() {
+            return Err("unclosed '[' in host".to_string());
+        }
+        i += 1; // past ']'
+        if i < bytes.len() && bytes[i] == b':' {
+            i += 1;
+            while i < bytes.len() && bytes[i].is_ascii_digit() {
+                i += 1;
+            }
+        }
+        if i >= bytes.len() {
+            return Ok(s.len());
+        }
+        if bytes[i] != b'/' {
+            return Err("expected '/' or end of authority after IPv6 host".to_string());
+        }
+        return Ok(i);
+    }
+
+    Ok(s.find('/').unwrap_or(s.len()))
+}
+
+fn parse_host_port(authority: &str) -> Result<(String, Option<u16>), String> {
+    if authority.starts_with('[') {
+        let close = authority
+            .find(']')
+            .ok_or_else(|| "unclosed '[' in host".to_string())?;
+        let host = authority[..=close].to_string();
+        let after = &authority[close + 1..];
+        if after.is_empty() {
+            return Ok((host, None));
+        }
+        let port_str = after.strip_prefix(':').ok_or_else(|| {
+            "invalid text after IPv6 host (expected optional ':port')".to_string()
+        })?;
+        if port_str.is_empty() {
+            return Err("empty port after IPv6 host".to_string());
+        }
+        let port: u16 = port_str
+            .parse()
+            .map_err(|_| "invalid port after IPv6 host".to_string())?;
+        return Ok((host, Some(port)));
+    }
+
+    if let Some((h, p)) = authority.rsplit_once(':') {
+        if !h.is_empty()
+            && !p.is_empty()
+            && p.chars().all(|c| c.is_ascii_digit())
+            && p.len() <= 5
+        {
+            let port: u16 = p.parse().map_err(|_| "invalid port".to_string())?;
+            return Ok((h.to_string(), Some(port)));
+        }
+    }
+
+    Ok((authority.to_string(), None))
+}
+
+#[cfg(test)]
+mod builtin_tests {
+    use super::{Url, parse_url_builtin};
+
+    fn b(s: &str) -> Url {
+        parse_url_builtin(s).unwrap()
+    }
+
+    #[test]
+    fn simple_host_port_path() {
+        let u = b("http://127.0.0.1:8080/anything/x");
+        assert_eq!(u.scheme, "http");
+        assert_eq!(u.host, "127.0.0.1");
+        assert_eq!(u.port, Some(8080));
+        assert_eq!(u.path, "/anything/x");
+        assert_eq!(u.authority(), "127.0.0.1:8080");
+    }
+
+    #[test]
+    fn ipv6_brackets_and_port() {
+        let u = b("http://[::1]:9999/foo");
+        assert_eq!(u.host, "[::1]");
+        assert_eq!(u.port, Some(9999));
+        assert_eq!(u.path, "/foo");
+    }
+
+    #[test]
+    fn ipv6_no_port() {
+        let u = b("http://[::1]/bar");
+        assert_eq!(u.host, "[::1]");
+        assert_eq!(u.port, None);
+        assert_eq!(u.path, "/bar");
+    }
+
+    #[test]
+    fn userinfo_stripped() {
+        let u = b("http://user:pass@example.com:7/p");
+        assert_eq!(u.host, "example.com");
+        assert_eq!(u.port, Some(7));
+        assert_eq!(u.path, "/p");
+    }
+
+    #[test]
+    fn tough_path_query() {
+        let u = b("http://127.0.0.1:8080/anything/foo$%25?!&1");
+        assert_eq!(u.path, "/anything/foo$%25");
+        assert_eq!(u.query.as_deref(), Some("!&1"));
+    }
+
+    #[test]
+    fn host_only_default_path() {
+        let u = b("https://example.com");
+        assert_eq!(u.host, "example.com");
+        assert_eq!(u.path, "/");
+        assert_eq!(u.port, None);
+    }
 }
