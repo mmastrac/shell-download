@@ -68,6 +68,16 @@ mod simple {
             let mut opts = OpenOptions::new();
             opts.write(true).create_new(true);
 
+            #[cfg(windows)]
+            {
+                use std::os::windows::fs::OpenOptionsExt as _;
+
+                // Allow other processes to open for read/write, but not delete.
+                const FILE_SHARE_READ: u32 = 0x00000001;
+                const FILE_SHARE_WRITE: u32 = 0x00000002;
+                opts.share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE);
+            }
+
             #[cfg(unix)]
             {
                 use std::os::unix::fs::OpenOptionsExt as _;
@@ -148,7 +158,7 @@ mod tf {
                     .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
                     .open(path)
             })?;
-            return Ok(TmpFile { inner: ntf });
+            Ok(TmpFile { inner: ntf })
         }
 
         #[cfg(not(windows))]
