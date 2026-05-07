@@ -111,6 +111,9 @@ impl RequestBuilder {
     /// Fetch the response body as a String, blocking until the download is
     /// complete.
     pub fn fetch_bytes(self) -> Result<Vec<u8>, ResponseError> {
+        // Reserve a final path but do not keep an open handle: `join` /
+        // `finalize_download` replace that path, which fails on Windows with
+        // ERROR_ACCESS_DENIED if our `TmpFile` still holds the file open.
         let tmp = crate::tempfile::create_tmp_file_in_path(
             "in-memory",
             None,
@@ -118,11 +121,17 @@ impl RequestBuilder {
             "shell-download-in-memory",
         )
         .map_err(ResponseError::Io)?;
+        let target_path = tmp.as_ref().to_path_buf();
+        drop(tmp);
+
         let handle = self
-            .start_internal(tmp.as_ref().to_path_buf())
+            .start_internal(target_path.clone())
             .map_err(ResponseError::Start)?;
         let _res = handle.join()?;
-        std::fs::read(&tmp).map_err(ResponseError::Io)
+
+        let out = std::fs::read(&target_path).map_err(ResponseError::Io)?;
+        let _ = std::fs::remove_file(&target_path);
+        Ok(out)
     }
 
     /// Start the download in a background thread.
