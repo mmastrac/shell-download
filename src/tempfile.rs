@@ -131,17 +131,45 @@ mod tf {
     use std::fs::File;
     use std::io;
     use std::path::Path;
+    use std::time::{Duration, Instant};
 
     use crate::url_parser::Url;
 
     #[derive(Debug)]
     pub(crate) struct TmpFile {
-        inner: tempfile::NamedTempFile<File>,
+        inner: Option<tempfile::NamedTempFile<File>>,
     }
 
     impl AsRef<Path> for TmpFile {
         fn as_ref(&self) -> &Path {
-            self.inner.path()
+            self.inner.as_ref().expect("tmp path present").path()
+        }
+    }
+
+    impl Drop for TmpFile {
+        fn drop(&mut self) {
+            // `tempfile` makes a best-effort attempt to delete on drop, but on Windows
+            // it's possible for AV/scanners to transiently hold the file open.
+            // We'll retry deletion briefly if the path still exists after dropping `inner`.
+            let path = match self.inner.as_ref() {
+                Some(inner) => inner.path().to_path_buf(),
+                None => return,
+            };
+
+            // Drop the inner tempfile first (best-effort cleanup).
+            drop(self.inner.take());
+
+            if !path.exists() {
+                return;
+            }
+
+            let deadline = Instant::now() + Duration::from_millis(500);
+            while path.exists() && Instant::now() < deadline {
+                let _ = std::fs::remove_file(&path);
+                if path.exists() {
+                    std::thread::sleep(Duration::from_millis(25));
+                }
+            }
         }
     }
 
@@ -166,21 +194,23 @@ mod tf {
                     .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
                     .open(path)
             })?;
-            Ok(TmpFile { inner: ntf })
+            Ok(TmpFile { inner: Some(ntf) })
         }
 
         #[cfg(not(windows))]
         {
             let ntf = tempfile::NamedTempFile::new_in(dir)?;
-            Ok(TmpFile { inner: ntf })
+            Ok(TmpFile { inner: Some(ntf) })
         }
     }
 
     impl TmpFile {
         pub(crate) fn persist<P: AsRef<Path>>(self, new_path: P) -> io::Result<File> {
+            let mut this = self;
+            let inner = this.inner.take().expect("tmp path present");
             let new_path = new_path.as_ref();
             let _ = std::fs::remove_file(new_path);
-            self.inner.persist(new_path).map_err(Into::into)
+            inner.persist(new_path).map_err(Into::into)
         }
     }
 }
