@@ -80,8 +80,7 @@ mod simple {
             {
                 use std::os::windows::fs::OpenOptionsExt as _;
 
-                // Allow another handle (e.g. PowerShell `FileStream` on the same path) to open
-                // for read/write while we hold the creating handle — see `powershell` driver.
+                // Allow concurrent access while our writer handle stays open (e.g. PowerShell).
                 const FILE_SHARE_READ: u32 = 0x00000001;
                 const FILE_SHARE_WRITE: u32 = 0x00000002;
                 opts.share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE);

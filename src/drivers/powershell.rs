@@ -46,7 +46,7 @@ try {
 /// Remainder: body stream to file, catch/finally/exit.
 const PS_HTTP_TRY_TAIL: &str = r#"
   $in=$response.Content.ReadAsStreamAsync().GetAwaiter().GetResult();
-  $sh=[System.IO.FileShare]::Read -bor [System.IO.FileShare]::Write;
+  $sh=[System.IO.FileShare]::Write;
   $outFs=[System.IO.File]::Open($o,[System.IO.FileMode]::Open,[System.IO.FileAccess]::Write,$sh);
   try {
     $in.CopyTo($outFs);

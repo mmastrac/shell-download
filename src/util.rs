@@ -175,15 +175,24 @@ pub(crate) fn finalize_download(
     Ok(())
 }
 
-/// Check for a gzip magic header.
+/// True if the file begins with gzip magic (`read` uses share flags on Windows).
 pub(crate) fn file_looks_gzipped(path: impl AsRef<Path>) -> io::Result<bool> {
-    let mut f = std::fs::File::open(path)?;
+    let path = path.as_ref();
+    let mut opts = std::fs::OpenOptions::new();
+    opts.read(true);
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt as _;
+        const FILE_SHARE_READ: u32 = 0x00000001;
+        const FILE_SHARE_WRITE: u32 = 0x00000002;
+        opts.share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE);
+    }
+    let mut f = opts.open(path)?;
     let mut b = [0u8; 2];
     let n = f.read(&mut b)?;
     Ok(n == 2 && b == [0x1f, 0x8b])
 }
 
-/// Gunzip `src` into `dst` using the system `gzip`.
 pub(crate) fn gunzip_to_target(
     src: impl AsRef<Path>,
     dst: impl AsRef<Path>,
