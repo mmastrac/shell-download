@@ -60,25 +60,47 @@ jobs:
           choco install -y wget
           wget --version
 
-      - name: Install pwsh (Linux, best-effort)
+      - name: Install pwsh (Linux)
         if: ${{ runner.os == 'Linux' }}
         shell: bash
         run: |
           set -euxo pipefail
           sudo apt-get update
-          # Ubuntu images may already include pwsh; if not, try installing via apt.
-          # If the package isn't available, continue without failing the job.
-          sudo apt-get install -y powershell || true
-          command -v pwsh >/dev/null 2>&1 && pwsh -NoProfile -NonInteractive -Command '$PSVersionTable.PSVersion' || true
+          sudo apt-get install -y powershell
+          command -v pwsh >/dev/null 2>&1 && pwsh -NoProfile -NonInteractive -Command '$PSVersionTable.PSVersion'
 
-      - name: Switch Docker to Linux mode (Windows)
+      # Gunicorn does not support native Windows; run httpbin under Waitress instead of Docker.
+      - name: Set up Python (httpbin on Windows)
+        if: ${{ runner.os == 'Windows' }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Start httpbin (Waitress, Windows)
         if: ${{ runner.os == 'Windows' }}
         shell: pwsh
         run: |
-          & "C:\Program Files\Docker\Docker\DockerCli.exe" -SwitchLinuxEngine
-          Start-Sleep -Seconds 15
+          $ErrorActionPreference = 'Stop'
+          python -m pip install -U pip
+          python -m pip install httpbin waitress
+          $port = 8080
+          $listen = "127.0.0.1:$port"
+          $proc = Start-Process -FilePath python -ArgumentList @(
+            '-m', 'waitress', "--listen=$listen", 'httpbin:app'
+          ) -WindowStyle Hidden -PassThru
+          Add-Content -Path $env:GITHUB_ENV -Value "SHELL_DOWNLOAD_HTTPBIN=http://127.0.0.1:$port"
+          for ($i = 0; $i -lt 90; $i++) {
+            try {
+              Invoke-WebRequest -Uri "http://127.0.0.1:$port/get" -UseBasicParsing -TimeoutSec 3 | Out-Null
+              exit 0
+            } catch {
+              Start-Sleep -Seconds 1
+            }
+          }
+          throw "httpbin did not become ready in time (waitress pid=$($proc.Id))"
 
       - name: Start httpbin (Docker)
+        if: ${{ runner.os != 'Windows' }}
         shell: bash
         run: |
           set -euo pipefail
