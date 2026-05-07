@@ -8,6 +8,7 @@ mod util;
 
 pub use sink::DownloadSink;
 
+use std::cell::Cell;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::{
@@ -111,30 +112,34 @@ impl RequestBuilder {
             .map_err(|e| ResponseError::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, e)))
     }
 
-    /// Fetch the response body as a String, blocking until the download is
+    /// Fetch the response body into memory, blocking until the download is
     /// complete.
     pub fn fetch_bytes(self) -> Result<Vec<u8>, ResponseError> {
-        // Reserve a final path but do not keep an open handle: `join` /
-        // `finalize_download` replace that path, which fails on Windows with
-        // ERROR_ACCESS_DENIED if our `TmpFile` still holds the file open.
-        let tmp = crate::tempfile::create_tmp_file_in_path(
-            "in-memory",
-            None,
-            &std::env::temp_dir(),
-            "shell-download-in-memory",
-        )
-        .map_err(ResponseError::Io)?;
-        let target_path = tmp.as_ref().to_path_buf();
-        drop(tmp);
+        url_parser::Url::new(&self.url)
+            .map_err(|e| ResponseError::Start(StartError::Url(e.to_string())))?;
 
-        let handle = self
-            .start_internal(target_path.clone())
-            .map_err(ResponseError::Start)?;
-        let _res = handle.join()?;
+        let cancel = Arc::new(AtomicBool::new(false));
+        let memory_root = DownloadSink::buffer();
+        let needs_clear = Cell::new(false);
+        let join = self
+            .start_first_backend(Arc::clone(&cancel), {
+                let root = memory_root.clone();
+                move || {
+                    if needs_clear.get() {
+                        root.cleanup_on_cancel();
+                    }
+                    needs_clear.set(true);
+                    root.clone()
+                }
+            })
+            .map_err(|(e, _sink)| ResponseError::Start(e))?;
 
-        let out = std::fs::read(&target_path).map_err(ResponseError::Io)?;
-        let _ = std::fs::remove_file(&target_path);
-        Ok(out)
+        let res = match join.join() {
+            Ok(r) => r,
+            Err(_) => Err(ResponseError::ThreadPanicked),
+        }?;
+
+        util::finalize_memory_body(memory_root, res.content_encoding)
     }
 
     /// Start the download in a background thread.
@@ -165,41 +170,62 @@ impl RequestBuilder {
                 .map_err(StartError::IoError)?;
 
         let cancel = Arc::new(AtomicBool::new(false));
+        let body_path = tmp_path.as_ref().to_path_buf();
+        let join = self
+            .start_first_backend(cancel.clone(), move || DownloadSink::file(body_path.clone()))
+            .map_err(|(e, _sink)| e)?;
+
+        Ok(RequestHandle {
+            cancel,
+            join: Some(join),
+            target_path,
+            tmp_path: Some(tmp_path),
+        })
+    }
+
+    /// Run [`candidate_downloaders`] once; `next_sink` prepares the body sink for each attempt.
+    /// On failure, the returned [`DownloadSink`] is spare capacity (final `next_sink()` or the
+    /// fatal error's sink from the backend).
+    fn start_first_backend(
+        &self,
+        cancel: Arc<AtomicBool>,
+        mut next_sink: impl FnMut() -> DownloadSink,
+    ) -> Result<
+        JoinHandle<Result<DownloadResult, ResponseError>>,
+        (StartError, DownloadSink),
+    > {
         let mut saw_non_not_found: Option<io::Error> = None;
         let mut saw_any_not_found = false;
 
         for d in candidate_downloaders(&self.preferred) {
-            let sink = DownloadSink::file(tmp_path.as_ref().to_path_buf());
-            match d.driver().start(self.clone(), sink, Arc::clone(&cancel)) {
-                Ok(join) => {
-                    return Ok(RequestHandle {
-                        cancel,
-                        join: Some(join),
-                        target_path,
-                        tmp_path: Some(tmp_path),
-                    });
-                }
-                Err(StartError::NoDriverFound) => {
+            let sink = next_sink();
+            match d
+                .driver()
+                .start(self.clone(), sink, Arc::clone(&cancel))
+            {
+                Ok(join) => return Ok(join),
+                Err((StartError::Url(msg), sink)) => return Err((StartError::Url(msg), sink)),
+                Err((StartError::NoDriverFound, _)) => {
                     saw_any_not_found = true;
                     continue;
                 }
-                Err(StartError::IoError(e)) => {
+                Err((StartError::IoError(e), _)) => {
                     if saw_non_not_found.is_none() {
                         saw_non_not_found = Some(e);
                     }
                     continue;
                 }
-                Err(StartError::Url(msg)) => return Err(StartError::Url(msg)),
             }
         }
 
+        let spare_sink = next_sink();
         if let Some(e) = saw_non_not_found {
-            return Err(StartError::IoError(e));
+            return Err((StartError::IoError(e), spare_sink));
         }
         if saw_any_not_found {
-            return Err(StartError::NoDriverFound);
+            return Err((StartError::NoDriverFound, spare_sink));
         }
-        Err(StartError::NoDriverFound)
+        Err((StartError::NoDriverFound, spare_sink))
     }
 }
 

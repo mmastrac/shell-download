@@ -90,6 +90,14 @@ impl DownloadSink {
             }
         })
     }
+
+    /// Takes ownership and returns accumulated bytes (buffer sink only).
+    pub(crate) fn take_buffer_bytes(self) -> Result<Vec<u8>, io::Error> {
+        match self.inner {
+            SinkInner::File(_) => Err(io::Error::other("not a buffer sink")),
+            SinkInner::Buffer(b) => Ok(std::mem::take(&mut *b.lock().unwrap())),
+        }
+    }
 }
 
 pub(crate) fn open_body_stream(path: &Path) -> io::Result<std::fs::File> {

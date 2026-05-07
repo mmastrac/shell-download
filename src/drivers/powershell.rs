@@ -14,7 +14,10 @@ impl Driver for PowerShellDriver {
         req: RequestBuilder,
         sink: DownloadSink,
         cancel: Arc<AtomicBool>,
-    ) -> Result<JoinHandle<Result<DownloadResult, ResponseError>>, StartError> {
+    ) -> Result<
+        JoinHandle<Result<DownloadResult, ResponseError>>,
+        (StartError, DownloadSink),
+    > {
         start_inner(req, sink, cancel)
     }
 }
@@ -74,10 +77,13 @@ fn start_inner(
     req: RequestBuilder,
     sink: DownloadSink,
     cancel: Arc<AtomicBool>,
-) -> Result<JoinHandle<Result<DownloadResult, ResponseError>>, StartError> {
+) -> Result<
+    JoinHandle<Result<DownloadResult, ResponseError>>,
+    (StartError, DownloadSink),
+> {
     let candidates = find_powershell_candidates();
     if candidates.is_empty() {
-        return Err(StartError::NoDriverFound);
+        return Err((StartError::NoDriverFound, sink));
     }
 
     let mut ps_headers = String::new();
@@ -133,16 +139,16 @@ fn start_inner(
                         last_io = Some(e);
                     }
                 }
-                Err(StartError::Url(msg)) => return Err(StartError::Url(msg)),
+                Err(StartError::Url(msg)) => return Err((StartError::Url(msg), sink)),
             };
         }
 
         if let Some(v) = started {
             v
         } else if let Some(e) = last_io {
-            return Err(StartError::IoError(e));
+            return Err((StartError::IoError(e), sink));
         } else {
-            return Err(StartError::NoDriverFound);
+            return Err((StartError::NoDriverFound, sink));
         }
     };
 

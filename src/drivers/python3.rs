@@ -15,7 +15,10 @@ impl Driver for Python3Driver {
         req: RequestBuilder,
         sink: DownloadSink,
         cancel: Arc<AtomicBool>,
-    ) -> Result<JoinHandle<Result<DownloadResult, ResponseError>>, StartError> {
+    ) -> Result<
+        JoinHandle<Result<DownloadResult, ResponseError>>,
+        (StartError, DownloadSink),
+    > {
         // Prefer python3, then python.
         let candidates: [(&str, &str); 2] = [("python3", "python3"), ("python", "python")];
         let mut exe: Option<&'static str> = None;
@@ -29,19 +32,21 @@ impl Driver for Python3Driver {
                 break;
             }
         }
-        let exe = exe.ok_or(StartError::NoDriverFound)?;
+        let Some(exe) = exe else {
+            return Err((StartError::NoDriverFound, sink));
+        };
 
         // If we fall back to `python`, ensure it's Python 3.x.
         if exe == "python" {
-            let out = Command::new("python")
-                .arg("--version")
-                .output()
-                .map_err(StartError::IoError)?;
+            let out = match Command::new("python").arg("--version").output() {
+                Ok(o) => o,
+                Err(e) => return Err((StartError::IoError(e), sink)),
+            };
             let mut s = String::new();
             s.push_str(&String::from_utf8_lossy(&out.stdout));
             s.push_str(&String::from_utf8_lossy(&out.stderr));
             if !s.trim_start().starts_with("Python 3") {
-                return Err(StartError::NoDriverFound);
+                return Err((StartError::NoDriverFound, sink));
             }
         }
 
@@ -116,7 +121,10 @@ sys.exit(_main(sys.argv))
             cmd.arg(format!("{k}: {v}"));
         }
 
-        let (child, direct_stdout) = util::spawn_child_for_download(cmd, &sink, exe)?;
+        let (child, direct_stdout) = match util::spawn_child_for_download(cmd, &sink, exe) {
+            Ok(x) => x,
+            Err(e) => return Err((e, sink)),
+        };
 
         Ok(util::spawn_download_thread(
             req,

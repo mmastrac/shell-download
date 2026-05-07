@@ -15,7 +15,10 @@ impl Driver for CurlDriver {
         req: RequestBuilder,
         sink: DownloadSink,
         cancel: Arc<AtomicBool>,
-    ) -> Result<JoinHandle<Result<DownloadResult, ResponseError>>, StartError> {
+    ) -> Result<
+        JoinHandle<Result<DownloadResult, ResponseError>>,
+        (StartError, DownloadSink),
+    > {
         let mut cmd = Command::new("curl");
         cmd.arg("-sS")
             .arg("--compressed")
@@ -33,7 +36,10 @@ impl Driver for CurlDriver {
             cmd.arg("-H").arg(format!("{k}: {v}"));
         }
 
-        let (child, direct_stdout) = util::spawn_child_for_download(cmd, &sink, "curl")?;
+        let (child, direct_stdout) = match util::spawn_child_for_download(cmd, &sink, "curl") {
+            Ok(x) => x,
+            Err(e) => return Err((e, sink)),
+        };
 
         Ok(util::spawn_download_thread(
             req,

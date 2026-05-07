@@ -24,7 +24,10 @@ impl Driver for OpenSslDriver {
         req: RequestBuilder,
         sink: DownloadSink,
         cancel: Arc<AtomicBool>,
-    ) -> Result<std::thread::JoinHandle<Result<DownloadResult, ResponseError>>, StartError> {
+    ) -> Result<
+        std::thread::JoinHandle<Result<DownloadResult, ResponseError>>,
+        (StartError, DownloadSink),
+    > {
         // If we can determine upfront that this request begins with https://, try to spawn
         // `openssl` now so that "command not found" becomes a StartError.
         if let Ok(parsed) = Url::new(&req.url) {
@@ -40,9 +43,9 @@ impl Driver for OpenSslDriver {
                         let _ = child.wait();
                     }
                     Err(e) if e.kind() == io::ErrorKind::NotFound => {
-                        return Err(StartError::NoDriverFound);
+                        return Err((StartError::NoDriverFound, sink));
                     }
-                    Err(e) => return Err(StartError::IoError(e)),
+                    Err(e) => return Err((StartError::IoError(e), sink)),
                 }
             }
         }

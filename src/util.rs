@@ -194,6 +194,69 @@ where
     })
 }
 
+/// Decompress gzip bytes using the system `gzip` CLI (stdin → stdout).
+pub(crate) fn gunzip_from_bytes(input: &[u8]) -> Result<Vec<u8>, ResponseError> {
+    let mut cmd = Command::new("gzip");
+    cmd.arg("-dc")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = cmd.spawn().map_err(ResponseError::Io)?;
+
+    let mut stdin = child
+        .stdin
+        .take()
+        .ok_or_else(|| ResponseError::Io(io::Error::other("missing gzip stdin")))?;
+    stdin.write_all(input).map_err(ResponseError::Io)?;
+    drop(stdin);
+
+    let mut stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| ResponseError::Io(io::Error::other("missing gzip stdout")))?;
+    let mut stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| ResponseError::Io(io::Error::other("missing gzip stderr")))?;
+
+    let stderr_join = thread::spawn(move || {
+        let mut buf = Vec::new();
+        let _ = stderr.read_to_end(&mut buf);
+        buf
+    });
+
+    let mut out = Vec::new();
+    stdout
+        .read_to_end(&mut out)
+        .map_err(ResponseError::Io)?;
+
+    let status = child.wait().map_err(ResponseError::Io)?;
+    let stderr_bytes = stderr_join.join().unwrap_or_default();
+
+    if !status.success() {
+        return Err(ResponseError::GzipFailed {
+            exit_code: status.code(),
+            stderr: String::from_utf8_lossy(&stderr_bytes).to_string(),
+        });
+    }
+    Ok(out)
+}
+
+/// Finish an in-memory download: apply gzip detection / decoding like [`finalize_download`].
+pub(crate) fn finalize_memory_body(
+    sink: DownloadSink,
+    content_encoding: Option<ContentEncoding>,
+) -> Result<Vec<u8>, ResponseError> {
+    let bytes = sink.take_buffer_bytes().map_err(ResponseError::Io)?;
+    let declared_gzip = matches!(content_encoding, Some(ContentEncoding::Gzip));
+    let looks_gzip = bytes.len() >= 2 && bytes[0] == 0x1f && bytes[1] == 0x8b;
+    if declared_gzip || looks_gzip {
+        gunzip_from_bytes(&bytes)
+    } else {
+        Ok(bytes)
+    }
+}
+
 /// Move or decode the temp file into its final location.
 pub(crate) fn finalize_download(
     tmp_file: crate::tempfile::TmpFile,

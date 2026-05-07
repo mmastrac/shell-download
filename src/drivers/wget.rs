@@ -15,7 +15,10 @@ impl Driver for WgetDriver {
         req: RequestBuilder,
         sink: DownloadSink,
         cancel: Arc<AtomicBool>,
-    ) -> Result<JoinHandle<Result<DownloadResult, ResponseError>>, StartError> {
+    ) -> Result<
+        JoinHandle<Result<DownloadResult, ResponseError>>,
+        (StartError, DownloadSink),
+    > {
         let mut cmd = Command::new("wget");
         cmd.arg("-O")
             .arg("-")
@@ -34,7 +37,10 @@ impl Driver for WgetDriver {
             cmd.arg("--header").arg(format!("{k}: {v}"));
         }
 
-        let (child, direct_stdout) = util::spawn_child_for_download(cmd, &sink, "wget")?;
+        let (child, direct_stdout) = match util::spawn_child_for_download(cmd, &sink, "wget") {
+            Ok(x) => x,
+            Err(e) => return Err((e, sink)),
+        };
 
         Ok(util::spawn_download_thread(
             req,
