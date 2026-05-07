@@ -15,9 +15,7 @@ pub(crate) trait Driver {
 }
 
 pub(crate) mod curl;
-pub(crate) mod http11;
-pub(crate) mod openssl;
 pub(crate) mod powershell;
 pub(crate) mod python3;
-pub(crate) mod tcp;
+pub(crate) mod tunnel;
 pub(crate) mod wget;

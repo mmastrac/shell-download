@@ -28,10 +28,12 @@ pub enum Downloader {
     PowerShell,
     /// Use Python `urllib`.
     Python3,
-    /// Plain HTTP/1.1 over a TCP socket (no TLS).
+    /// Minimal HTTP/HTTPS tunnel: TCP for HTTP, OpenSSL (`openssl s_client`) for HTTPS.
+    Tunnel,
+    /// Plain HTTP/1.1 over a TCP socket only (no TLS).
     Tcp,
-    /// HTTPS via `openssl s_client`.
-    OpenSsl,
+    /// HTTPS via OpenSSL only (`openssl s_client`).
+    OpenSSL,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -231,16 +233,18 @@ impl Downloader {
         static POWERSHELL: drivers::powershell::PowerShellDriver =
             drivers::powershell::PowerShellDriver;
         static PYTHON3: drivers::python3::Python3Driver = drivers::python3::Python3Driver;
-        static TCP: drivers::tcp::TcpDriver = drivers::tcp::TcpDriver;
-        static OPENSSL: drivers::openssl::OpenSslDriver = drivers::openssl::OpenSslDriver;
+        static TUNNEL: drivers::tunnel::TunnelDriver = drivers::tunnel::TunnelDriver;
+        static TCP: drivers::tunnel::TcpDriver = drivers::tunnel::TcpDriver;
+        static OPENSSL: drivers::tunnel::OpenSslDriver = drivers::tunnel::OpenSslDriver;
 
         match self {
             Downloader::Curl => &CURL,
             Downloader::Wget => &WGET,
             Downloader::PowerShell => &POWERSHELL,
             Downloader::Python3 => &PYTHON3,
+            Downloader::Tunnel => &TUNNEL,
             Downloader::Tcp => &TCP,
-            Downloader::OpenSsl => &OPENSSL,
+            Downloader::OpenSSL => &OPENSSL,
         }
     }
 }
@@ -359,7 +363,6 @@ fn candidate_downloaders(preferred: &[Downloader]) -> Vec<Downloader> {
         Downloader::Wget,
         Downloader::PowerShell,
         Downloader::Python3,
-        Downloader::Tcp,
-        Downloader::OpenSsl,
+        Downloader::Tunnel,
     ]
 }

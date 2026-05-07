@@ -1,4 +1,4 @@
-//! Shared HTTP/1.1 helpers for minimal TCP and `openssl s_client` backends.
+//! Shared HTTP/1.1 helpers for minimal TCP and OpenSSL `s_client` backends.
 
 use std::io::{self, Read};
 use std::sync::{

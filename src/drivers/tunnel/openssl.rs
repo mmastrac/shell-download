@@ -8,13 +8,15 @@ use std::thread::JoinHandle;
 
 use crate::{
     ContentEncoding, DownloadResult, DownloadSink, RequestBuilder, ResponseError, StartError,
-    drivers::{Driver, http11},
+    drivers::Driver,
     url_parser::Url,
     util,
 };
 
+use super::http11;
+
 #[derive(Debug, Clone, Copy)]
-/// HTTPS via `openssl s_client`.
+/// HTTPS via OpenSSL (`openssl s_client`).
 pub(crate) struct OpenSslDriver;
 
 impl Driver for OpenSslDriver {

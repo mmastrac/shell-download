@@ -27,8 +27,8 @@ fn fetch_httpbin_redirect_powershell() {
 }
 
 #[test]
-fn fetch_httpbin_redirect_openssl() {
-    httpbin_test(shell_download::Downloader::OpenSsl);
+fn fetch_httpbin_redirect_tunnel() {
+    httpbin_test(shell_download::Downloader::Tunnel);
 }
 
 fn httpbin_test(driver: shell_download::Downloader) {

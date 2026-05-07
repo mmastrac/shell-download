@@ -41,8 +41,8 @@ fn localhost_python_powershell() {
 }
 
 #[test]
-fn localhost_python_tcp() {
-    hit_localhost(shell_download::Downloader::Tcp);
+fn localhost_python_tunnel() {
+    hit_localhost(shell_download::Downloader::Tunnel);
 }
 
 fn hit_localhost(driver: shell_download::Downloader) {
