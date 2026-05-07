@@ -13,6 +13,10 @@ description = "Zero-dependency Rust library for downloading a remote URL to a fi
 [lib]
 path = "src/lib.rs"
 
+[[bin]]
+name = "shell-download"
+path = "src/main.rs"
+
 [features]
 default = []
 url = ["dep:url"]
