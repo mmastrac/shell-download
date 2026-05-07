@@ -125,18 +125,8 @@ impl RequestBuilder {
 
         let cancel = Arc::new(AtomicBool::new(false));
         let memory_root = DownloadSink::buffer();
-        let needs_clear = Cell::new(false);
         let join = self
-            .start_first_backend(Arc::clone(&cancel), {
-                let root = memory_root.clone();
-                move || {
-                    if needs_clear.get() {
-                        root.cleanup_on_cancel();
-                    }
-                    needs_clear.set(true);
-                    root.clone()
-                }
-            })
+            .start_first_backend(Arc::clone(&cancel), memory_root.clone())
             .map_err(ResponseError::Start)?;
 
         let res = match join.join() {
@@ -176,8 +166,8 @@ impl RequestBuilder {
 
         let cancel = Arc::new(AtomicBool::new(false));
         let body_path = tmp_path.as_ref().to_path_buf();
-        let join = self
-            .start_first_backend(cancel.clone(), move || DownloadSink::file(body_path.clone()))?;
+        let join =
+            self.start_first_backend(cancel.clone(), DownloadSink::file(body_path.clone()))?;
 
         Ok(RequestHandle {
             cancel,
@@ -191,16 +181,15 @@ impl RequestBuilder {
     fn start_first_backend(
         &self,
         cancel: Arc<AtomicBool>,
-        mut next_sink: impl FnMut() -> DownloadSink,
+        sink: DownloadSink,
     ) -> Result<JoinHandle<Result<DownloadResult, ResponseError>>, StartError> {
         let mut saw_non_not_found: Option<io::Error> = None;
         let mut saw_any_not_found = false;
 
         for d in candidate_downloaders(&self.preferred) {
-            let sink = next_sink();
             match d
                 .driver()
-                .start(self.clone(), sink, Arc::clone(&cancel))
+                .start(self.clone(), sink.clone(), Arc::clone(&cancel))
             {
                 Ok(join) => return Ok(join),
                 Err(StartError::Url(msg)) => return Err(StartError::Url(msg)),

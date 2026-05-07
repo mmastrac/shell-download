@@ -6,9 +6,7 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
 };
 
-use crate::{
-    ContentEncoding, DownloadSink, RequestBuilder, ResponseError, url_parser::Url, util,
-};
+use crate::{ContentEncoding, DownloadSink, RequestBuilder, ResponseError, url_parser::Url, util};
 
 pub(crate) type HttpResponseParts = (u16, Vec<(String, String)>, Vec<u8>);
 
@@ -158,10 +156,7 @@ fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     haystack.windows(needle.len()).position(|w| w == needle)
 }
 
-fn header_value<'a>(
-    headers: &'a [(String, String)],
-    key: &str,
-) -> Option<&'a str> {
+fn header_value<'a>(headers: &'a [(String, String)], key: &str) -> Option<&'a str> {
     headers
         .iter()
         .find(|(k, _)| k.eq_ignore_ascii_case(key))

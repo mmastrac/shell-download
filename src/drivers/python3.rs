@@ -2,7 +2,9 @@ use std::process::Command;
 use std::sync::{Arc, atomic::AtomicBool};
 use std::thread::JoinHandle;
 
-use crate::{DownloadResult, DownloadSink, RequestBuilder, ResponseError, StartError, drivers::Driver, util};
+use crate::{
+    DownloadResult, DownloadSink, RequestBuilder, ResponseError, StartError, drivers::Driver, util,
+};
 
 #[derive(Debug, Clone, Copy)]
 /// `python3` backend using `urllib`.
@@ -116,19 +118,12 @@ sys.exit(_main(sys.argv))
             cmd.arg(format!("{k}: {v}"));
         }
 
-        util::spawn_download_cmd_thread(
-            cmd,
-            exe,
-            req,
-            sink,
-            cancel,
-            move |output, _req| {
-                let code_str = String::from_utf8_lossy(&output.stderr).trim().to_string();
-                let code: u16 = code_str
-                    .parse()
-                    .map_err(|_| ResponseError::BadStatusCode(code_str))?;
-                Ok((code, None))
-            },
-        )
+        util::spawn_download_cmd_thread(cmd, exe, req, sink, cancel, move |output, _req| {
+            let code_str = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            let code: u16 = code_str
+                .parse()
+                .map_err(|_| ResponseError::BadStatusCode(code_str))?;
+            Ok((code, None))
+        })
     }
 }

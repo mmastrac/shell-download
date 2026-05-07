@@ -8,10 +8,7 @@ use std::thread::{self, JoinHandle};
 
 use crate::{
     ContentEncoding, DownloadResult, DownloadSink, RequestBuilder, ResponseError, StartError,
-    drivers::Driver,
-    process,
-    url_parser::Url,
-    util,
+    drivers::Driver, process, url_parser::Url, util,
 };
 
 use super::http11;
@@ -48,9 +45,12 @@ impl OpenSslDriver {
         sink: DownloadSink,
         cancel: Arc<AtomicBool>,
     ) -> Result<JoinHandle<Result<DownloadResult, ResponseError>>, StartError> {
-        Ok(util::spawn_download_thread(req, sink, cancel, move |req, sink, cancel| {
-            download_https_with_first_child(req, sink, cancel)
-        }))
+        Ok(util::spawn_download_thread(
+            req,
+            sink,
+            cancel,
+            move |req, sink, cancel| download_https_with_first_child(req, sink, cancel),
+        ))
     }
 }
 
@@ -132,5 +132,3 @@ fn spawn_stderr_drain(mut stderr: ChildStderr) -> JoinHandle<Vec<u8>> {
         buf
     })
 }
-
-

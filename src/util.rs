@@ -23,19 +23,6 @@ pub(crate) fn add_common_headers(req: &RequestBuilder) -> Vec<(String, String)> 
     headers
 }
 
-/// Spawn a download child: stdin null, stdout/stderr piped (body read via [`DownloadSink::spawn_stdout_drain`]).
-pub(crate) fn spawn_child_for_download(
-    mut cmd: Command,
-    _program: &'static str,
-) -> Result<Child, StartError> {
-    DownloadSink::attach_download_stdio(&mut cmd);
-    match cmd.spawn() {
-        Ok(c) => Ok(c),
-        Err(e) if e.kind() == io::ErrorKind::NotFound => Err(StartError::NoDriverFound),
-        Err(e) => Err(StartError::IoError(e)),
-    }
-}
-
 /// Find all matching executables in `PATH`.
 pub(crate) fn find_program_in_path(program: &str) -> Vec<PathBuf> {
     let mut out = Vec::new();
@@ -161,18 +148,31 @@ pub(crate) fn spawn_download_cmd_thread<F>(
 where
     F: Send
         + 'static
-        + FnOnce(std::process::Output, &RequestBuilder) -> Result<
-            (u16, Option<ContentEncoding>),
-            ResponseError,
-        >,
+        + FnOnce(
+            std::process::Output,
+            &RequestBuilder,
+        ) -> Result<(u16, Option<ContentEncoding>), ResponseError>,
 {
-    let mut child = spawn_child_for_download(cmd, program)?;
+    let mut child = {
+        let mut cmd = cmd;
+        let cmd: &mut Command = &mut cmd;
+        cmd.stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        match cmd.spawn() {
+            Ok(c) => Ok(c),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => Err(StartError::NoDriverFound),
+            Err(e) => Err(StartError::IoError(e)),
+        }
+    }?;
     let stdout = match child.stdout.take() {
         Some(s) => s,
         None => {
             let _ = child.kill();
             let _ = child.wait();
-            return Err(StartError::IoError(io::Error::other("missing child stdout")));
+            return Err(StartError::IoError(io::Error::other(
+                "missing child stdout",
+            )));
         }
     };
     let stderr = match child.stderr.take() {
@@ -180,22 +180,22 @@ where
         None => {
             let _ = child.kill();
             let _ = child.wait();
-            return Err(StartError::IoError(io::Error::other("missing child stderr")));
+            return Err(StartError::IoError(io::Error::other(
+                "missing child stderr",
+            )));
         }
     };
 
-    Ok(spawn_download_thread(req, sink, cancel, move |req, sink, cancel| {
-        let output = wait_child_into_sink(
-            child,
-            stdout,
-            stderr,
-            sink,
-            cancel,
-            program,
-            req.quiet,
-        )?;
-        body(output, req)
-    }))
+    Ok(spawn_download_thread(
+        req,
+        sink,
+        cancel,
+        move |req, sink, cancel| {
+            let output =
+                wait_child_into_sink(child, stdout, stderr, sink, cancel, program, req.quiet)?;
+            body(output, req)
+        },
+    ))
 }
 
 /// Spawn a worker thread that runs a backend download function.
@@ -246,9 +246,7 @@ pub(crate) fn gunzip_from_bytes(input: &[u8]) -> Result<Vec<u8>, ResponseError> 
     });
 
     let mut out = Vec::new();
-    stdout
-        .read_to_end(&mut out)
-        .map_err(ResponseError::Io)?;
+    stdout.read_to_end(&mut out).map_err(ResponseError::Io)?;
 
     let status = child.wait().map_err(ResponseError::Io)?;
     let stderr_bytes = stderr_join.join().unwrap_or_default();

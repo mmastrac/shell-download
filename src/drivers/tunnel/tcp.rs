@@ -8,9 +8,7 @@ use std::thread::JoinHandle;
 
 use crate::{
     ContentEncoding, DownloadResult, DownloadSink, RequestBuilder, ResponseError, StartError,
-    drivers::Driver,
-    url_parser::Url,
-    util,
+    drivers::Driver, url_parser::Url, util,
 };
 
 use super::http11;
@@ -34,7 +32,12 @@ impl Driver for TcpDriver {
             return Err(StartError::NoDriverFound);
         }
 
-        Ok(util::spawn_download_thread(req, sink, cancel, download_http))
+        Ok(util::spawn_download_thread(
+            req,
+            sink,
+            cancel,
+            download_http,
+        ))
     }
 }
 
@@ -63,7 +66,9 @@ fn fetch_http_only(
     let host = url.host.as_str();
     let port = url.port.unwrap_or(80);
     let mut stream = TcpStream::connect((host, port)).map_err(ResponseError::Io)?;
-    stream.write_all(request.as_bytes()).map_err(ResponseError::Io)?;
+    stream
+        .write_all(request.as_bytes())
+        .map_err(ResponseError::Io)?;
     stream.flush().map_err(ResponseError::Io)?;
 
     let buf = http11::read_to_vec_cancelled(&mut stream, cancel)?;

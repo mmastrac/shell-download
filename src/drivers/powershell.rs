@@ -1,7 +1,9 @@
 use std::sync::{Arc, atomic::AtomicBool};
 use std::thread::JoinHandle;
 
-use crate::{DownloadResult, DownloadSink, RequestBuilder, ResponseError, StartError, drivers::Driver, util};
+use crate::{
+    DownloadResult, DownloadSink, RequestBuilder, ResponseError, StartError, drivers::Driver, util,
+};
 
 #[derive(Debug, Clone, Copy)]
 /// PowerShell (`pwsh`/`powershell`) backend.

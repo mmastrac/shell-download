@@ -36,13 +36,6 @@ impl DownloadSink {
         }
     }
 
-    /// Configure `cmd` before spawn: stdin null, stdout/stderr piped (same for every backend).
-    pub(crate) fn attach_download_stdio(cmd: &mut Command) {
-        cmd.stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-    }
-
     pub(crate) fn write_all_body(&self, bytes: &[u8]) -> io::Result<()> {
         match &self.inner {
             SinkInner::File(path) => {

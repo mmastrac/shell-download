@@ -3,10 +3,10 @@
 use std::sync::{Arc, atomic::AtomicBool};
 use std::thread::JoinHandle;
 
+use crate::drivers::Driver;
 use crate::{
     DownloadResult, DownloadSink, RequestBuilder, ResponseError, StartError, url_parser::Url,
 };
-use crate::drivers::Driver;
 
 mod http11;
 mod openssl;
