@@ -118,12 +118,12 @@ mod tf {
 
     #[derive(Debug)]
     pub(crate) struct TmpFile {
-        inner: tempfile::NamedTempFile,
+        path: Option<tempfile::TempPath>,
     }
 
     impl AsRef<Path> for TmpFile {
         fn as_ref(&self) -> &Path {
-            self.inner.path()
+            self.path.as_deref().expect("tmp path present")
         }
     }
 
@@ -133,14 +133,20 @@ mod tf {
         dir: &Path,
         _hint: &str,
     ) -> io::Result<TmpFile> {
-        tempfile::NamedTempFile::new_in(dir).map(|inner| TmpFile { inner })
+        let p = tempfile::NamedTempFile::new_in(dir)?.into_temp_path();
+        Ok(TmpFile { path: Some(p) })
     }
 
     impl TmpFile {
         pub(crate) fn persist<P: AsRef<Path>>(self, new_path: P) -> io::Result<File> {
+            let mut this = self;
             let new_path = new_path.as_ref();
             let _ = std::fs::remove_file(new_path);
-            self.inner.persist(new_path).map_err(Into::into)
+            let p = this.path.take().expect("tmp path present");
+            p.persist(new_path).map_err(|e| e.error)?;
+            // Once persisted, we no longer own a path to clean up.
+            this.path = None;
+            File::open(new_path)
         }
     }
 }
@@ -150,3 +156,75 @@ pub(crate) use tf::{TmpFile, create_tmp_file_in_path};
 
 #[cfg(not(feature = "tempfile"))]
 pub(crate) use simple::{TmpFile, create_tmp_file_in_path};
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+    use std::process::Command;
+    use std::time::{Duration, Instant};
+
+    use super::create_tmp_file_in_path;
+
+    fn wait_for_gone(path: &PathBuf) {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while path.exists() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(25));
+        }
+        assert!(
+            !path.exists(),
+            "expected temp file to be removed on drop: {}",
+            path.display()
+        );
+    }
+
+    #[cfg(unix)]
+    fn sh_single_quote(s: &str) -> String {
+        // POSIX-safe single-quoting: close, escape, reopen.
+        format!("'{}'", s.replace('\'', "'\\''"))
+    }
+
+    #[test]
+    fn tmpfile_is_deleted_on_drop_after_external_write() {
+        let path: PathBuf = {
+            let tmp = create_tmp_file_in_path(
+                "test",
+                None,
+                &std::env::temp_dir(),
+                "shell-download-tempfile-test",
+            )
+            .expect("create tmpfile");
+
+            let path = tmp.as_ref().to_path_buf();
+
+            // Spawn an external command that writes to the file by path.
+            #[cfg(unix)]
+            {
+                let cmd = format!("echo hi > {}", sh_single_quote(&path.to_string_lossy()));
+                let status = Command::new("sh")
+                    .arg("-c")
+                    .arg(cmd)
+                    .status()
+                    .expect("spawn sh");
+                assert!(status.success(), "sh command failed");
+            }
+
+            #[cfg(windows)]
+            {
+                // cmd.exe quoting: wrap in quotes; `echo` output redirection.
+                let cmd = format!("echo hi > \"{}\"", path.display());
+                let status = Command::new("cmd")
+                    .arg("/C")
+                    .arg(cmd)
+                    .status()
+                    .expect("spawn cmd");
+                assert!(status.success(), "cmd command failed");
+            }
+
+            assert!(path.exists(), "expected temp file to exist after write");
+            path
+            // `tmp` drops here: should remove the file.
+        };
+
+        wait_for_gone(&path);
+    }
+}

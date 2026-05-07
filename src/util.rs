@@ -170,7 +170,7 @@ pub(crate) fn finalize_download(
     if needs_gunzip {
         gunzip_to_target(&tmp_file, target_path)?;
     } else {
-        let _persisted = tmp_file.persist(target_path).map_err(ResponseError::Io)?;
+        tmp_file.persist(target_path).map_err(ResponseError::Io)?;
     }
     Ok(())
 }
@@ -237,6 +237,6 @@ pub(crate) fn gunzip_to_target(
         });
     }
 
-    let _persisted = tmp_dst.persist(dst).map_err(ResponseError::Io)?;
+    tmp_dst.persist(dst).map_err(ResponseError::Io)?;
     Ok(())
 }
