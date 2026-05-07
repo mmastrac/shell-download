@@ -71,20 +71,19 @@ jobs:
           sudo apt-get install -y powershell || true
           command -v pwsh >/dev/null 2>&1 && pwsh -NoProfile -NonInteractive -Command '$PSVersionTable.PSVersion' || true
 
+      - name: Switch Docker to Linux mode (Windows)
+        if: ${{ runner.os == 'Windows' }}
+        shell: pwsh
+        run: |
+          & "C:\Program Files\Docker\Docker\DockerCli.exe" -SwitchLinuxEngine
+          Start-Sleep -Seconds 15
+
       - name: Start httpbin (Docker)
         shell: bash
         run: |
           set -euo pipefail
           PORT=8080
           IMAGE=kennethreitz/httpbin:latest
-          if ! command -v docker >/dev/null 2>&1; then
-            echo "SHELL_DOWNLOAD_HTTPBIN=https://httpbin.org" >> "$GITHUB_ENV"
-            echo "Docker not found; falling back to public httpbin"
-            exit 0
-          fi
-          # Linux image: use linux/amd64 everywhere (GitHub runners; arm64 hosts via emulation).
-          # Docker Desktop on Windows must use "Linux containers", not Windows containers, or pull fails with:
-          #   image operating system "linux" cannot be used on this platform
           docker pull --platform linux/amd64 "$IMAGE"
           docker rm -f shell-download-httpbin 2>/dev/null || true
           docker run -d --name shell-download-httpbin --rm --platform linux/amd64 -p "127.0.0.1:${PORT}:80" "$IMAGE"
@@ -93,7 +92,7 @@ jobs:
             if curl -sfS "http://127.0.0.1:${PORT}/get" >/dev/null; then
               exit 0
             fi
-            sleep 1
+            sleep .1
           done
           echo "httpbin did not become ready in time" >&2
           docker logs shell-download-httpbin 2>&1 || true
