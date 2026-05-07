@@ -33,21 +33,19 @@ impl Driver for CurlDriver {
             cmd.arg("-H").arg(format!("{k}: {v}"));
         }
 
-        let child = util::spawn_child_for_download(cmd, "curl")?;
-
-        Ok(util::spawn_download_thread(
+        util::spawn_download_cmd_thread(
+            cmd,
+            "curl",
             req,
             sink,
             cancel,
-            move |req, sink, cancel| {
-                let output =
-                    util::wait_child_into_sink(child, sink, cancel, "curl", req.quiet)?;
+            move |output, _req| {
                 let code_str = String::from_utf8_lossy(&output.stderr).trim().to_string();
                 let code: u16 = code_str
                     .parse()
                     .map_err(|_| ResponseError::BadStatusCode(code_str))?;
                 Ok((code, None))
             },
-        ))
+        )
     }
 }

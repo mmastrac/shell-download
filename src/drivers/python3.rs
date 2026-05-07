@@ -116,21 +116,19 @@ sys.exit(_main(sys.argv))
             cmd.arg(format!("{k}: {v}"));
         }
 
-        let child = util::spawn_child_for_download(cmd, exe)?;
-
-        Ok(util::spawn_download_thread(
+        util::spawn_download_cmd_thread(
+            cmd,
+            exe,
             req,
             sink,
             cancel,
-            move |req, sink, cancel| {
-                let output =
-                    util::wait_child_into_sink(child, sink, cancel, exe, req.quiet)?;
+            move |output, _req| {
                 let code_str = String::from_utf8_lossy(&output.stderr).trim().to_string();
                 let code: u16 = code_str
                     .parse()
                     .map_err(|_| ResponseError::BadStatusCode(code_str))?;
                 Ok((code, None))
             },
-        ))
+        )
     }
 }

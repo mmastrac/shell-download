@@ -1,6 +1,6 @@
 use std::io::{self, Read as _, Write as _};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, ChildStderr, ChildStdout, Command, Stdio};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
@@ -82,28 +82,22 @@ pub(crate) fn find_program_in_path(program: &str) -> Vec<PathBuf> {
 }
 
 /// Wait for a download child: stream stdout into `sink`, buffer stderr.
-pub(crate) fn wait_child_into_sink(
+fn wait_child_into_sink(
     mut child: Child,
+    stdout: ChildStdout,
+    stderr_pipe: ChildStderr,
     sink: &DownloadSink,
     cancel: &Arc<AtomicBool>,
     program: &'static str,
     quiet: Quiet,
 ) -> Result<std::process::Output, ResponseError> {
-    let mut stderr_pipe = child
-        .stderr
-        .take()
-        .ok_or_else(|| ResponseError::Io(io::Error::other("missing child stderr")))?;
-
     let stderr_handle = thread::spawn(move || {
+        let mut stderr = stderr_pipe;
         let mut buf = Vec::new();
-        let _ = stderr_pipe.read_to_end(&mut buf);
+        let _ = stderr.read_to_end(&mut buf);
         buf
     });
 
-    let stdout = child
-        .stdout
-        .take()
-        .ok_or_else(|| ResponseError::Io(io::Error::other("missing child stdout")))?;
     let copy_handle = sink.clone().spawn_stdout_drain(stdout);
 
     loop {
@@ -153,6 +147,57 @@ pub(crate) fn wait_child_into_sink(
     }
 }
 
+/// Spawn a download child ([`spawn_child_for_download`]), split stdout/stderr, then on the worker
+/// thread wait for it (streaming stdout into `sink`) and pass the resulting [`std::process::Output`]
+/// to `body`.
+pub(crate) fn spawn_download_cmd_thread<F>(
+    cmd: Command,
+    program: &'static str,
+    req: RequestBuilder,
+    sink: DownloadSink,
+    cancel: Arc<AtomicBool>,
+    body: F,
+) -> Result<JoinHandle<Result<DownloadResult, ResponseError>>, StartError>
+where
+    F: Send
+        + 'static
+        + FnOnce(std::process::Output, &RequestBuilder) -> Result<
+            (u16, Option<ContentEncoding>),
+            ResponseError,
+        >,
+{
+    let mut child = spawn_child_for_download(cmd, program)?;
+    let stdout = match child.stdout.take() {
+        Some(s) => s,
+        None => {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(StartError::IoError(io::Error::other("missing child stdout")));
+        }
+    };
+    let stderr = match child.stderr.take() {
+        Some(s) => s,
+        None => {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(StartError::IoError(io::Error::other("missing child stderr")));
+        }
+    };
+
+    Ok(spawn_download_thread(req, sink, cancel, move |req, sink, cancel| {
+        let output = wait_child_into_sink(
+            child,
+            stdout,
+            stderr,
+            sink,
+            cancel,
+            program,
+            req.quiet,
+        )?;
+        body(output, req)
+    }))
+}
+
 /// Spawn a worker thread that runs a backend download function.
 pub(crate) fn spawn_download_thread<F>(
     req: RequestBuilder,
@@ -187,27 +232,12 @@ where
 /// Decompress gzip bytes using the system `gzip` CLI (stdin → stdout).
 pub(crate) fn gunzip_from_bytes(input: &[u8]) -> Result<Vec<u8>, ResponseError> {
     let mut cmd = Command::new("gzip");
-    cmd.arg("-dc")
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    let mut child = cmd.spawn().map_err(ResponseError::Io)?;
+    cmd.arg("-dc");
+    let (mut child, mut stdin, mut stdout, mut stderr) =
+        crate::process::spawn_stdin_stdout_stderr(&mut cmd).map_err(ResponseError::Io)?;
 
-    let mut stdin = child
-        .stdin
-        .take()
-        .ok_or_else(|| ResponseError::Io(io::Error::other("missing gzip stdin")))?;
     stdin.write_all(input).map_err(ResponseError::Io)?;
     drop(stdin);
-
-    let mut stdout = child
-        .stdout
-        .take()
-        .ok_or_else(|| ResponseError::Io(io::Error::other("missing gzip stdout")))?;
-    let mut stderr = child
-        .stderr
-        .take()
-        .ok_or_else(|| ResponseError::Io(io::Error::other("missing gzip stderr")))?;
 
     let stderr_join = thread::spawn(move || {
         let mut buf = Vec::new();

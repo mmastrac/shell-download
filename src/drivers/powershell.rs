@@ -111,65 +111,49 @@ fn start_inner(
 
     let mut last_io: Option<std::io::Error> = None;
 
-    let (child, program_label) = {
-        let mut started: Option<(std::process::Child, &'static str)> = None;
-        for exe in candidates {
-            let mut cmd = std::process::Command::new(exe);
-            cmd.arg("-NoProfile")
-                .arg("-NonInteractive")
-                .arg("-ExecutionPolicy")
-                .arg("Bypass")
-                .arg("-Command")
-                .arg(&script);
+    for exe in candidates {
+        let mut cmd = std::process::Command::new(exe);
+        cmd.arg("-NoProfile")
+            .arg("-NonInteractive")
+            .arg("-ExecutionPolicy")
+            .arg("Bypass")
+            .arg("-Command")
+            .arg(&script);
 
-            match util::spawn_child_for_download(cmd, exe) {
-                Ok(ch) => {
-                    started = Some((ch, exe));
-                    break;
+        match util::spawn_download_cmd_thread(
+            cmd,
+            exe,
+            req.clone(),
+            sink.clone(),
+            Arc::clone(&cancel),
+            move |output, _req| {
+                let stderr_str = String::from_utf8_lossy(&output.stderr).to_string();
+                let status_line = stderr_str
+                    .lines()
+                    .find_map(|line| line.trim().strip_prefix(PS_STATUS_PREFIX).map(str::trim));
+                let code_str = status_line.unwrap_or("").to_string();
+                let status_code: u16 = code_str
+                    .parse()
+                    .map_err(|_| ResponseError::BadStatusCode(code_str))?;
+
+                Ok((status_code, None))
+            },
+        ) {
+            Ok(h) => return Ok(h),
+            Err(StartError::NoDriverFound) => {}
+            Err(StartError::IoError(e)) => {
+                if last_io.is_none() {
+                    last_io = Some(e);
                 }
-                Err(StartError::NoDriverFound) => {}
-                Err(StartError::IoError(e)) => {
-                    if last_io.is_none() {
-                        last_io = Some(e);
-                    }
-                }
-                Err(StartError::Url(msg)) => return Err(StartError::Url(msg)),
-            };
+            }
+            Err(StartError::Url(msg)) => return Err(StartError::Url(msg)),
         }
+    }
 
-        if let Some(v) = started {
-            v
-        } else if let Some(e) = last_io {
-            return Err(StartError::IoError(e));
-        } else {
-            return Err(StartError::NoDriverFound);
-        }
-    };
-
-    Ok(util::spawn_download_thread(
-        req,
-        sink,
-        cancel,
-        move |req, sink, cancel| {
-            let output = util::wait_child_into_sink(
-                child,
-                sink,
-                cancel,
-                program_label,
-                req.quiet,
-            )?;
-            let stderr_str = String::from_utf8_lossy(&output.stderr).to_string();
-            let status_line = stderr_str
-                .lines()
-                .find_map(|line| line.trim().strip_prefix(PS_STATUS_PREFIX).map(str::trim));
-            let code_str = status_line.unwrap_or("").to_string();
-            let status_code: u16 = code_str
-                .parse()
-                .map_err(|_| ResponseError::BadStatusCode(code_str))?;
-
-            Ok((status_code, None))
-        },
-    ))
+    if let Some(e) = last_io {
+        return Err(StartError::IoError(e));
+    }
+    Err(StartError::NoDriverFound)
 }
 
 /// Escape a value for a single-quoted PowerShell string.

@@ -1,6 +1,7 @@
 #![doc = include_str!("../README.md")]
 
 mod drivers;
+mod process;
 mod sink;
 mod tempfile;
 mod url_parser;

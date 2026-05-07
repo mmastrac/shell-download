@@ -34,15 +34,13 @@ impl Driver for WgetDriver {
             cmd.arg("--header").arg(format!("{k}: {v}"));
         }
 
-        let child = util::spawn_child_for_download(cmd, "wget")?;
-
-        Ok(util::spawn_download_thread(
+        util::spawn_download_cmd_thread(
+            cmd,
+            "wget",
             req,
             sink,
             cancel,
-            move |req, sink, cancel| {
-                let output =
-                    util::wait_child_into_sink(child, sink, cancel, "wget", req.quiet)?;
+            move |output, _req| {
                 let stderr = String::from_utf8_lossy(&output.stderr);
                 let mut last_code: Option<u16> = None;
                 for line in stderr.lines() {
@@ -58,6 +56,6 @@ impl Driver for WgetDriver {
                 }
                 Ok((last_code.unwrap_or(200), None))
             },
-        ))
+        )
     }
 }
