@@ -135,8 +135,8 @@ impl RequestBuilder {
         // URL preflight: fail early with a message useful to callers.
         url_parser::Url::new(&self.url).map_err(|e| StartError::Url(e.to_string()))?;
 
-        let tmp_path = util::tmp_path_for_target(&target_path);
-        let _ = std::fs::remove_file(&tmp_path);
+        let tmp_path =
+            util::create_tmp_file_for_target(&target_path).map_err(StartError::IoError)?;
 
         let cancel = Arc::new(AtomicBool::new(false));
         let mut saw_non_not_found: Option<io::Error> = None;

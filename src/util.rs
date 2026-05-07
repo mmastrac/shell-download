@@ -1,3 +1,4 @@
+use std::fs::OpenOptions;
 use std::io::{self, Read as _, Write as _};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -169,14 +170,46 @@ where
     })
 }
 
-/// Derive a unique temporary path for a target path.
-pub(crate) fn tmp_path_for_target(target_path: &Path) -> PathBuf {
-    let mut tmp = target_path.to_path_buf();
-    tmp.set_extension(format!(
-        "{}.tmp",
-        unique_suffix().unwrap_or_else(|| "download".into())
-    ));
-    tmp
+/// Create a unique temporary file next to the target.
+///
+/// This pre-creates the file using `create_new` so the path cannot be swapped
+/// for a symlink between selection and use. On Unix we additionally request
+/// mode `0600` for the temp file.
+pub(crate) fn create_tmp_file_for_target(target_path: &Path) -> io::Result<PathBuf> {
+    let parent = target_path.parent().unwrap_or_else(|| Path::new("."));
+
+    // Try to keep filenames readable while still making them unique.
+    let base = target_path
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("download");
+
+    let suffix = unique_suffix().unwrap_or_else(|| "download".into());
+
+    for attempt in 0u32..200 {
+        let name = format!(".{base}.{suffix}.{attempt}.tmp");
+        let path = parent.join(name);
+
+        let mut opts = OpenOptions::new();
+        opts.write(true).create_new(true);
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt as _;
+            opts.mode(0o600);
+        }
+
+        match opts.open(&path) {
+            Ok(_file) => return Ok(path),
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(e),
+        }
+    }
+
+    Err(io::Error::new(
+        io::ErrorKind::AlreadyExists,
+        "failed to create unique temporary download file",
+    ))
 }
 
 /// Move or decode the temp file into its final location.
