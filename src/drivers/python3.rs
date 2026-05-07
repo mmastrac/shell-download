@@ -15,10 +15,7 @@ impl Driver for Python3Driver {
         req: RequestBuilder,
         sink: DownloadSink,
         cancel: Arc<AtomicBool>,
-    ) -> Result<
-        JoinHandle<Result<DownloadResult, ResponseError>>,
-        (StartError, DownloadSink),
-    > {
+    ) -> Result<JoinHandle<Result<DownloadResult, ResponseError>>, StartError> {
         // Prefer python3, then python.
         let candidates: [(&str, &str); 2] = [("python3", "python3"), ("python", "python")];
         let mut exe: Option<&'static str> = None;
@@ -32,21 +29,19 @@ impl Driver for Python3Driver {
                 break;
             }
         }
-        let Some(exe) = exe else {
-            return Err((StartError::NoDriverFound, sink));
-        };
+        let exe = exe.ok_or(StartError::NoDriverFound)?;
 
         // If we fall back to `python`, ensure it's Python 3.x.
         if exe == "python" {
-            let out = match Command::new("python").arg("--version").output() {
-                Ok(o) => o,
-                Err(e) => return Err((StartError::IoError(e), sink)),
-            };
+            let out = Command::new("python")
+                .arg("--version")
+                .output()
+                .map_err(StartError::IoError)?;
             let mut s = String::new();
             s.push_str(&String::from_utf8_lossy(&out.stdout));
             s.push_str(&String::from_utf8_lossy(&out.stderr));
             if !s.trim_start().starts_with("Python 3") {
-                return Err((StartError::NoDriverFound, sink));
+                return Err(StartError::NoDriverFound);
             }
         }
 
@@ -121,24 +116,15 @@ sys.exit(_main(sys.argv))
             cmd.arg(format!("{k}: {v}"));
         }
 
-        let (child, direct_stdout) = match util::spawn_child_for_download(cmd, &sink, exe) {
-            Ok(x) => x,
-            Err(e) => return Err((e, sink)),
-        };
+        let child = util::spawn_child_for_download(cmd, exe)?;
 
         Ok(util::spawn_download_thread(
             req,
             sink,
             cancel,
-            move |req, _sink, cancel| {
-                let output = util::wait_child_into_sink(
-                    child,
-                    _sink,
-                    direct_stdout,
-                    cancel,
-                    exe,
-                    req.quiet,
-                )?;
+            move |req, sink, cancel| {
+                let output =
+                    util::wait_child_into_sink(child, sink, cancel, exe, req.quiet)?;
                 let code_str = String::from_utf8_lossy(&output.stderr).trim().to_string();
                 let code: u16 = code_str
                     .parse()

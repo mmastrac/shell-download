@@ -23,16 +23,14 @@ pub(crate) fn add_common_headers(req: &RequestBuilder) -> Vec<(String, String)> 
     headers
 }
 
-/// Spawn a download child: stdin null, stderr piped, stdout per [`DownloadSink::attach_stdout`].
+/// Spawn a download child: stdin null, stdout/stderr piped (body read via [`DownloadSink::spawn_stdout_drain`]).
 pub(crate) fn spawn_child_for_download(
-    cmd: Command,
-    sink: &DownloadSink,
+    mut cmd: Command,
     _program: &'static str,
-) -> Result<(Child, bool), StartError> {
-    let mut cmd = cmd;
-    let direct_stdout = sink.attach_stdout(&mut cmd).map_err(StartError::IoError)?;
+) -> Result<Child, StartError> {
+    DownloadSink::attach_download_stdio(&mut cmd);
     match cmd.spawn() {
-        Ok(c) => Ok((c, direct_stdout)),
+        Ok(c) => Ok(c),
         Err(e) if e.kind() == io::ErrorKind::NotFound => Err(StartError::NoDriverFound),
         Err(e) => Err(StartError::IoError(e)),
     }
@@ -83,11 +81,10 @@ pub(crate) fn find_program_in_path(program: &str) -> Vec<PathBuf> {
     out
 }
 
-/// Wait for a download child: body lands in `sink` (direct file or piped drain), stderr buffered.
+/// Wait for a download child: stream stdout into `sink`, buffer stderr.
 pub(crate) fn wait_child_into_sink(
     mut child: Child,
     sink: &DownloadSink,
-    stdout_direct_to_file: bool,
     cancel: &Arc<AtomicBool>,
     program: &'static str,
     quiet: Quiet,
@@ -103,34 +100,27 @@ pub(crate) fn wait_child_into_sink(
         buf
     });
 
-    let copy_handle = if stdout_direct_to_file {
-        None
-    } else {
-        let stdout = child
-            .stdout
-            .take()
-            .ok_or_else(|| ResponseError::Io(io::Error::other("missing child stdout")))?;
-        Some(sink.clone().drain_piped_stdout(stdout))
-    };
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| ResponseError::Io(io::Error::other("missing child stdout")))?;
+    let copy_handle = sink.clone().spawn_stdout_drain(stdout);
 
     loop {
         if cancel.load(Ordering::SeqCst) {
             let _ = child.kill();
             let _ = child.wait();
-            if let Some(h) = copy_handle {
-                let _ = h.join();
-            }
+            let _ = copy_handle.join();
             let _ = stderr_handle.join();
             return Err(ResponseError::Cancelled);
         }
 
         match child.try_wait() {
             Ok(Some(status)) => {
-                if let Some(h) = copy_handle {
-                    h.join()
-                        .map_err(|_| ResponseError::ThreadPanicked)?
-                        .map_err(ResponseError::Io)?;
-                }
+                copy_handle
+                    .join()
+                    .map_err(|_| ResponseError::ThreadPanicked)?
+                    .map_err(ResponseError::Io)?;
 
                 let stderr_bytes = stderr_handle
                     .join()

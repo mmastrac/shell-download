@@ -7,6 +7,9 @@ use std::thread;
 use std::thread::JoinHandle;
 
 /// Where a backend writes the downloaded response body.
+///
+/// Child processes always use piped stdout; the body is processed from [`ChildStdout`] in a worker
+/// thread (to file or in-memory buffer) via [`DownloadSink::spawn_stdout_drain`].
 #[derive(Clone, Debug)]
 pub struct DownloadSink {
     inner: SinkInner,
@@ -33,6 +36,13 @@ impl DownloadSink {
         }
     }
 
+    /// Configure `cmd` before spawn: stdin null, stdout/stderr piped (same for every backend).
+    pub(crate) fn attach_download_stdio(cmd: &mut Command) {
+        cmd.stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+    }
+
     pub(crate) fn write_all_body(&self, bytes: &[u8]) -> io::Result<()> {
         match &self.inner {
             SinkInner::File(path) => {
@@ -48,26 +58,6 @@ impl DownloadSink {
         }
     }
 
-    /// Configure `cmd` for a download child: stdin null, stderr piped.
-    /// On a [`DownloadSink::file`] sink, stdout is that file (child writes directly).
-    /// On a buffer sink, stdout is piped for the parent to drain.
-    ///
-    /// Returns `true` if stdout was attached to the file (no parent read of stdout).
-    pub(crate) fn attach_stdout(&self, cmd: &mut Command) -> io::Result<bool> {
-        cmd.stdin(Stdio::null()).stderr(Stdio::piped());
-        match &self.inner {
-            SinkInner::File(path) => {
-                let f = open_body_stream(path)?;
-                cmd.stdout(Stdio::from(f));
-                Ok(true)
-            }
-            SinkInner::Buffer(_) => {
-                cmd.stdout(Stdio::piped());
-                Ok(false)
-            }
-        }
-    }
-
     pub(crate) fn cleanup_on_cancel(&self) {
         match &self.inner {
             SinkInner::File(p) => {
@@ -79,11 +69,13 @@ impl DownloadSink {
         }
     }
 
-    pub(crate) fn drain_piped_stdout(self, mut stdout: ChildStdout) -> JoinHandle<io::Result<u64>> {
-        thread::spawn(move || match &self.inner {
-            SinkInner::File(_) => Err(io::Error::other(
-                "internal error: piped stdout with file sink",
-            )),
+    /// Spawn a thread that reads the child's stdout into this sink (file or buffer).
+    pub(crate) fn spawn_stdout_drain(self, mut stdout: ChildStdout) -> JoinHandle<io::Result<u64>> {
+        thread::spawn(move || match self.inner {
+            SinkInner::File(path) => {
+                let mut f = open_body_stream(&path)?;
+                io::copy(&mut stdout, &mut f)
+            }
             SinkInner::Buffer(buf) => {
                 let mut g = buf.lock().unwrap();
                 io::copy(&mut stdout, &mut *g)

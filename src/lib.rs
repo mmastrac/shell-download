@@ -28,7 +28,9 @@ pub enum Downloader {
     PowerShell,
     /// Use Python `urllib`.
     Python3,
-    /// Speak HTTP/1.1 via `openssl s_client` or TCP socket (best-effort).
+    /// Plain HTTP/1.1 over a TCP socket (no TLS).
+    Tcp,
+    /// HTTPS via `openssl s_client`.
     OpenSsl,
 }
 
@@ -132,7 +134,7 @@ impl RequestBuilder {
                     root.clone()
                 }
             })
-            .map_err(|(e, _sink)| ResponseError::Start(e))?;
+            .map_err(ResponseError::Start)?;
 
         let res = match join.join() {
             Ok(r) => r,
@@ -172,8 +174,7 @@ impl RequestBuilder {
         let cancel = Arc::new(AtomicBool::new(false));
         let body_path = tmp_path.as_ref().to_path_buf();
         let join = self
-            .start_first_backend(cancel.clone(), move || DownloadSink::file(body_path.clone()))
-            .map_err(|(e, _sink)| e)?;
+            .start_first_backend(cancel.clone(), move || DownloadSink::file(body_path.clone()))?;
 
         Ok(RequestHandle {
             cancel,
@@ -184,16 +185,11 @@ impl RequestBuilder {
     }
 
     /// Run [`candidate_downloaders`] once; `next_sink` prepares the body sink for each attempt.
-    /// On failure, the returned [`DownloadSink`] is spare capacity (final `next_sink()` or the
-    /// fatal error's sink from the backend).
     fn start_first_backend(
         &self,
         cancel: Arc<AtomicBool>,
         mut next_sink: impl FnMut() -> DownloadSink,
-    ) -> Result<
-        JoinHandle<Result<DownloadResult, ResponseError>>,
-        (StartError, DownloadSink),
-    > {
+    ) -> Result<JoinHandle<Result<DownloadResult, ResponseError>>, StartError> {
         let mut saw_non_not_found: Option<io::Error> = None;
         let mut saw_any_not_found = false;
 
@@ -204,12 +200,12 @@ impl RequestBuilder {
                 .start(self.clone(), sink, Arc::clone(&cancel))
             {
                 Ok(join) => return Ok(join),
-                Err((StartError::Url(msg), sink)) => return Err((StartError::Url(msg), sink)),
-                Err((StartError::NoDriverFound, _)) => {
+                Err(StartError::Url(msg)) => return Err(StartError::Url(msg)),
+                Err(StartError::NoDriverFound) => {
                     saw_any_not_found = true;
                     continue;
                 }
-                Err((StartError::IoError(e), _)) => {
+                Err(StartError::IoError(e)) => {
                     if saw_non_not_found.is_none() {
                         saw_non_not_found = Some(e);
                     }
@@ -218,14 +214,13 @@ impl RequestBuilder {
             }
         }
 
-        let spare_sink = next_sink();
         if let Some(e) = saw_non_not_found {
-            return Err((StartError::IoError(e), spare_sink));
+            return Err(StartError::IoError(e));
         }
         if saw_any_not_found {
-            return Err((StartError::NoDriverFound, spare_sink));
+            return Err(StartError::NoDriverFound);
         }
-        Err((StartError::NoDriverFound, spare_sink))
+        Err(StartError::NoDriverFound)
     }
 }
 
@@ -236,6 +231,7 @@ impl Downloader {
         static POWERSHELL: drivers::powershell::PowerShellDriver =
             drivers::powershell::PowerShellDriver;
         static PYTHON3: drivers::python3::Python3Driver = drivers::python3::Python3Driver;
+        static TCP: drivers::tcp::TcpDriver = drivers::tcp::TcpDriver;
         static OPENSSL: drivers::openssl::OpenSslDriver = drivers::openssl::OpenSslDriver;
 
         match self {
@@ -243,6 +239,7 @@ impl Downloader {
             Downloader::Wget => &WGET,
             Downloader::PowerShell => &POWERSHELL,
             Downloader::Python3 => &PYTHON3,
+            Downloader::Tcp => &TCP,
             Downloader::OpenSsl => &OPENSSL,
         }
     }
@@ -362,6 +359,7 @@ fn candidate_downloaders(preferred: &[Downloader]) -> Vec<Downloader> {
         Downloader::Wget,
         Downloader::PowerShell,
         Downloader::Python3,
+        Downloader::Tcp,
         Downloader::OpenSsl,
     ]
 }

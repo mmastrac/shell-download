@@ -15,10 +15,7 @@ impl Driver for WgetDriver {
         req: RequestBuilder,
         sink: DownloadSink,
         cancel: Arc<AtomicBool>,
-    ) -> Result<
-        JoinHandle<Result<DownloadResult, ResponseError>>,
-        (StartError, DownloadSink),
-    > {
+    ) -> Result<JoinHandle<Result<DownloadResult, ResponseError>>, StartError> {
         let mut cmd = Command::new("wget");
         cmd.arg("-O")
             .arg("-")
@@ -37,24 +34,15 @@ impl Driver for WgetDriver {
             cmd.arg("--header").arg(format!("{k}: {v}"));
         }
 
-        let (child, direct_stdout) = match util::spawn_child_for_download(cmd, &sink, "wget") {
-            Ok(x) => x,
-            Err(e) => return Err((e, sink)),
-        };
+        let child = util::spawn_child_for_download(cmd, "wget")?;
 
         Ok(util::spawn_download_thread(
             req,
             sink,
             cancel,
-            move |req, _sink, cancel| {
-                let output = util::wait_child_into_sink(
-                    child,
-                    _sink,
-                    direct_stdout,
-                    cancel,
-                    "wget",
-                    req.quiet,
-                )?;
+            move |req, sink, cancel| {
+                let output =
+                    util::wait_child_into_sink(child, sink, cancel, "wget", req.quiet)?;
                 let stderr = String::from_utf8_lossy(&output.stderr);
                 let mut last_code: Option<u16> = None;
                 for line in stderr.lines() {

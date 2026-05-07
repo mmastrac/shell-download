@@ -14,10 +14,7 @@ impl Driver for PowerShellDriver {
         req: RequestBuilder,
         sink: DownloadSink,
         cancel: Arc<AtomicBool>,
-    ) -> Result<
-        JoinHandle<Result<DownloadResult, ResponseError>>,
-        (StartError, DownloadSink),
-    > {
+    ) -> Result<JoinHandle<Result<DownloadResult, ResponseError>>, StartError> {
         start_inner(req, sink, cancel)
     }
 }
@@ -77,13 +74,10 @@ fn start_inner(
     req: RequestBuilder,
     sink: DownloadSink,
     cancel: Arc<AtomicBool>,
-) -> Result<
-    JoinHandle<Result<DownloadResult, ResponseError>>,
-    (StartError, DownloadSink),
-> {
+) -> Result<JoinHandle<Result<DownloadResult, ResponseError>>, StartError> {
     let candidates = find_powershell_candidates();
     if candidates.is_empty() {
-        return Err((StartError::NoDriverFound, sink));
+        return Err(StartError::NoDriverFound);
     }
 
     let mut ps_headers = String::new();
@@ -117,8 +111,8 @@ fn start_inner(
 
     let mut last_io: Option<std::io::Error> = None;
 
-    let (child, program_label, direct_stdout) = {
-        let mut started: Option<(std::process::Child, &'static str, bool)> = None;
+    let (child, program_label) = {
+        let mut started: Option<(std::process::Child, &'static str)> = None;
         for exe in candidates {
             let mut cmd = std::process::Command::new(exe);
             cmd.arg("-NoProfile")
@@ -128,9 +122,9 @@ fn start_inner(
                 .arg("-Command")
                 .arg(&script);
 
-            match util::spawn_child_for_download(cmd, &sink, exe) {
-                Ok((ch, dir)) => {
-                    started = Some((ch, exe, dir));
+            match util::spawn_child_for_download(cmd, exe) {
+                Ok(ch) => {
+                    started = Some((ch, exe));
                     break;
                 }
                 Err(StartError::NoDriverFound) => {}
@@ -139,16 +133,16 @@ fn start_inner(
                         last_io = Some(e);
                     }
                 }
-                Err(StartError::Url(msg)) => return Err((StartError::Url(msg), sink)),
+                Err(StartError::Url(msg)) => return Err(StartError::Url(msg)),
             };
         }
 
         if let Some(v) = started {
             v
         } else if let Some(e) = last_io {
-            return Err((StartError::IoError(e), sink));
+            return Err(StartError::IoError(e));
         } else {
-            return Err((StartError::NoDriverFound, sink));
+            return Err(StartError::NoDriverFound);
         }
     };
 
@@ -160,7 +154,6 @@ fn start_inner(
             let output = util::wait_child_into_sink(
                 child,
                 sink,
-                direct_stdout,
                 cancel,
                 program_label,
                 req.quiet,

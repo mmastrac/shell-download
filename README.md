@@ -9,8 +9,8 @@ whatever download tools are available on the current system. <sup>❡</sup>
 
 <sup>❡</sup> By default, `tempfile` is enabled for secure temporary file creation. Disable it with `default-features = false`.
 
-It hunts for (in order): `curl`, `wget`, `pwsh`/`powershell`, `python3`, and
-finally `openssl` (HTTPS via `openssl s_client`, HTTP via a raw TCP GET).
+It hunts for (in order): `curl`, `wget`, `pwsh`/`powershell`, `python3`, raw
+TCP for HTTP, and finally `openssl s_client` for HTTPS.
 
 - The caller provides a target path.
 - That file is unlinked before the request starts.

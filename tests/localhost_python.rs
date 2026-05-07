@@ -41,8 +41,8 @@ fn localhost_python_powershell() {
 }
 
 #[test]
-fn localhost_python_openssl() {
-    hit_localhost(shell_download::Downloader::OpenSsl);
+fn localhost_python_tcp() {
+    hit_localhost(shell_download::Downloader::Tcp);
 }
 
 fn hit_localhost(driver: shell_download::Downloader) {
