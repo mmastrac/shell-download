@@ -7,8 +7,10 @@ use std::sync::{
 use std::thread::JoinHandle;
 
 use crate::{
-    ContentEncoding, DownloadResult, DownloadSink, RequestBuilder, ResponseError, StartError,
-    drivers::Driver, url_parser::Url, util,
+    ContentEncoding, DownloadResult, DownloadSink, ResponseError, StartError,
+    drivers::{Driver, Request},
+    url_parser::Url,
+    util,
 };
 
 use super::http11;
@@ -20,14 +22,11 @@ pub(crate) struct TcpDriver;
 impl Driver for TcpDriver {
     fn start(
         &self,
-        req: RequestBuilder,
+        req: Request,
         sink: DownloadSink,
         cancel: Arc<AtomicBool>,
     ) -> Result<JoinHandle<Result<DownloadResult, ResponseError>>, StartError> {
-        let url = match Url::new(&req.url) {
-            Ok(u) => u,
-            Err(_) => return Err(StartError::NoDriverFound),
-        };
+        let url = req.url.clone();
         if url.scheme != "http" {
             return Err(StartError::NoDriverFound);
         }
@@ -42,7 +41,7 @@ impl Driver for TcpDriver {
 }
 
 fn download_http(
-    req: &RequestBuilder,
+    req: &Request,
     _sink: &DownloadSink,
     cancel: &Arc<AtomicBool>,
     pipe_writer: std::io::PipeWriter,
@@ -57,7 +56,7 @@ fn download_http(
 
 fn fetch_http_only(
     url: &Url,
-    req: &RequestBuilder,
+    req: &Request,
     cancel: &Arc<AtomicBool>,
 ) -> Result<http11::HttpResponseParts, ResponseError> {
     if url.scheme != "http" {

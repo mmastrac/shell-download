@@ -43,6 +43,23 @@ impl Url {
             None => self.host.clone(),
         }
     }
+
+    /// Reconstruct the URL string (for CLI arguments and redirect chains).
+    pub fn to_url_string(&self) -> String {
+        let mut out = format!("{}://{}", self.scheme, self.authority());
+        out.push_str(&self.path);
+        if let Some(q) = &self.query {
+            if !q.is_empty() {
+                out.push('?');
+                out.push_str(q);
+            }
+        }
+        if let Some(f) = &self.fragment {
+            out.push('#');
+            out.push_str(f);
+        }
+        out
+    }
 }
 
 #[allow(dead_code)]

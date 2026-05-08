@@ -6,12 +6,12 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
 };
 
-use crate::{ContentEncoding, RequestBuilder, ResponseError, url_parser::Url, util};
+use crate::{ContentEncoding, ResponseError, drivers::Request, url_parser::Url, util};
 
 pub(crate) type HttpResponseParts = (u16, Vec<(String, String)>, Vec<u8>);
 
 /// Build a `GET` request line and headers for `url` and `req`.
-pub(crate) fn build_get_request(url: &Url, req: &RequestBuilder) -> String {
+pub(crate) fn build_get_request(url: &Url, req: &Request) -> String {
     let path = url.path_and_query();
     let mut request = String::new();
     request.push_str(&format!("GET {path} HTTP/1.1\r\n"));
@@ -47,16 +47,12 @@ pub(crate) fn read_to_vec_cancelled(
 
 /// Follow redirects and write the final response body to `pipe_writer`. `fetch` performs one HTTP exchange.
 pub(crate) fn redirect_download(
-    req: RequestBuilder,
+    req: Request,
     cancel: Arc<AtomicBool>,
     mut pipe_writer: std::io::PipeWriter,
-    mut fetch: impl FnMut(
-        &Url,
-        &RequestBuilder,
-        &Arc<AtomicBool>,
-    ) -> Result<HttpResponseParts, ResponseError>,
+    mut fetch: impl FnMut(&Url, &Request, &Arc<AtomicBool>) -> Result<HttpResponseParts, ResponseError>,
 ) -> Result<(u16, Option<ContentEncoding>), ResponseError> {
-    let mut current_url = req.url.clone();
+    let mut current_url = req.url.to_url_string();
     let mut redirects_left = if req.follow_redirects {
         10usize
     } else {

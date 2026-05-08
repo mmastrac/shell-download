@@ -3,7 +3,9 @@ use std::sync::{Arc, atomic::AtomicBool};
 use std::thread::JoinHandle;
 
 use crate::{
-    DownloadResult, DownloadSink, RequestBuilder, ResponseError, StartError, drivers::Driver, util,
+    DownloadResult, DownloadSink, ResponseError, StartError,
+    drivers::{Driver, Request},
+    util,
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -14,7 +16,7 @@ impl Driver for Python3Driver {
     /// Start a download using Python `urllib`.
     fn start(
         &self,
-        req: RequestBuilder,
+        req: Request,
         sink: DownloadSink,
         cancel: Arc<AtomicBool>,
     ) -> Result<JoinHandle<Result<DownloadResult, ResponseError>>, StartError> {
@@ -111,7 +113,7 @@ sys.exit(_main(sys.argv))
         let mut cmd = Command::new(exe);
         cmd.arg("-c")
             .arg(script)
-            .arg(&req.url)
+            .arg(req.url.to_url_string())
             .arg(if req.follow_redirects { "1" } else { "0" });
 
         for (k, v) in util::add_common_headers(&req) {
@@ -124,7 +126,7 @@ sys.exit(_main(sys.argv))
 
 fn download_python3(
     output: std::process::Output,
-    _req: &RequestBuilder,
+    _req: &Request,
 ) -> Result<(u16, Option<crate::ContentEncoding>), ResponseError> {
     let code_str = String::from_utf8_lossy(&output.stderr).trim().to_string();
     let code: u16 = code_str
