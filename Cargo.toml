@@ -22,10 +22,11 @@ default = []
 url = ["dep:url"]
 
 [profile.release]
-opt-level = 3
+opt-level = "z"
 lto = true
-panic = "abort"
 codegen-units = 1
+debug = false
+strip = "symbols"
 
 [dependencies]
 url = { version = "2.5", optional = true, default-features = false }
