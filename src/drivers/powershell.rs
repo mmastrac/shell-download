@@ -82,35 +82,7 @@ fn start_inner(
         return Err(StartError::NoDriverFound);
     }
 
-    let mut ps_headers = String::new();
-    for (k, v) in util::add_common_headers(&req) {
-        ps_headers.push('\'');
-        ps_headers.push_str(&escape_ps(&k));
-        ps_headers.push_str("'='");
-        ps_headers.push_str(&escape_ps(&v));
-        ps_headers.push_str("';");
-    }
-    let mut headers_expr = String::with_capacity(ps_headers.len() + 2);
-    headers_expr.push_str("@{");
-    headers_expr.push_str(&ps_headers);
-    headers_expr.push('}');
-    let url = escape_ps(&req.url);
-    let max_redir = if req.follow_redirects { 10 } else { 0 };
-
-    let mut script = String::new();
-    script.push_str("$ProgressPreference='SilentlyContinue';$h=");
-    script.push_str(&headers_expr);
-    script.push_str(";$u='");
-    script.push_str(&url);
-    script.push_str("';$mr=");
-    script.push_str(&max_redir.to_string());
-    script.push(';');
-    script.push_str(PS_HTTP_TRY_HEAD);
-    script.push_str("[Console]::Error.WriteLine(\"");
-    script.push_str(PS_STATUS_PREFIX);
-    script.push_str("$sc\");");
-    script.push_str(PS_HTTP_TRY_TAIL);
-
+    let script = generate_powershell_script(&req);
     let mut last_io: Option<std::io::Error> = None;
 
     for exe in candidates {
@@ -145,6 +117,39 @@ fn start_inner(
         return Err(StartError::IoError(e));
     }
     Err(StartError::NoDriverFound)
+}
+
+fn generate_powershell_script(req: &RequestBuilder) -> String {
+    let mut ps_headers = String::new();
+    for (k, v) in util::add_common_headers(req) {
+        ps_headers.push('\'');
+        ps_headers.push_str(&escape_ps(&k));
+        ps_headers.push_str("'='");
+        ps_headers.push_str(&escape_ps(&v));
+        ps_headers.push_str("';");
+    }
+    let mut headers_expr = String::with_capacity(ps_headers.len() + 2);
+    headers_expr.push_str("@{");
+    headers_expr.push_str(&ps_headers);
+    headers_expr.push('}');
+    let url = escape_ps(&req.url);
+    let max_redir = if req.follow_redirects { 10 } else { 0 };
+
+    let mut script = String::new();
+    script.push_str("$ProgressPreference='SilentlyContinue';$h=");
+    script.push_str(&headers_expr);
+    script.push_str(";$u='");
+    script.push_str(&url);
+    script.push_str("';$mr=");
+    script.push_str(&max_redir.to_string());
+    script.push(';');
+    script.push_str(PS_HTTP_TRY_HEAD);
+    script.push_str("[Console]::Error.WriteLine(\"");
+    script.push_str(PS_STATUS_PREFIX);
+    script.push_str("$sc\");");
+    script.push_str(PS_HTTP_TRY_TAIL);
+
+    script
 }
 
 fn download_pwsh(
