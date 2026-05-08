@@ -7,6 +7,7 @@ fn usage() -> ! {
          \n\
          -o <FILE>  Write to file (default: -)\n\
          -o -       Write to stdout\n\
+         -L         Follow redirects\n\
          -q         Quiet (suppress redirect/status output)\n\
          -v         Verbose (show redirect/status output)"
     );
@@ -18,11 +19,13 @@ fn main() -> Result<(), String> {
 
     let mut quiet = false;
     let mut verbose = false;
+    let mut follow_redirects = false;
     let mut url: Option<String> = None;
     let mut out: Option<String> = None;
 
     while let Some(a) = args.next() {
         match a.as_str() {
+            "-L" => follow_redirects = true,
             "-q" => quiet = true,
             "-v" => verbose = true,
             "-o" => out = args.next().or_else(|| usage()),
@@ -45,6 +48,7 @@ fn main() -> Result<(), String> {
     if out == "-" {
         // Must keep child output quiet to avoid corrupting stdout.
         let bytes = shell_download::RequestBuilder::new(url)
+            .follow_redirects(follow_redirects)
             .fetch_bytes()
             .map_err(|e| format!("{e:?}"))?;
         io::stdout()
@@ -62,6 +66,7 @@ fn main() -> Result<(), String> {
 
         let out_path = PathBuf::from(out);
         let handle = shell_download::RequestBuilder::new(url)
+            .follow_redirects(follow_redirects)
             .quiet(q)
             .start(&out_path)
             .map_err(|e| format!("{e:?}"))?;
