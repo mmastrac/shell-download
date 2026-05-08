@@ -49,7 +49,7 @@ impl OpenSslDriver {
             req,
             sink,
             cancel,
-            |req, sink, cancel, w| download_https_with_first_child(req, sink, cancel, w),
+            download_https_with_first_child,
         ))
     }
 }

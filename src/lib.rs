@@ -3,7 +3,6 @@
 mod drivers;
 mod process;
 mod sink;
-mod tempfile;
 mod url_parser;
 mod util;
 
@@ -138,33 +137,19 @@ impl RequestBuilder {
         // URL preflight: fail early with a message useful to callers.
         let url = url_parser::Url::new(&self.url).map_err(|e| StartError::Url(e.to_string()))?;
 
-        let target_path = target_path.as_ref().to_path_buf();
-        let parent_path = target_path.parent().unwrap();
-        let placeholder_file = OpenOptions::new()
+        let target_file = OpenOptions::new()
             .create(true)
             .truncate(true)
             .write(true)
             .open(&target_path)?;
-        let file_name = target_path.file_name().ok_or_else(|| {
-            StartError::IoError(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "download target path must include a file name",
-            ))
-        })?;
-
-        let hint = file_name.to_str().unwrap_or("download");
-        let tmp_path =
-            crate::tempfile::create_tmp_file_in_path("download", Some(&url), parent_path, hint)
-                .map_err(StartError::IoError)?;
 
         let cancel = Arc::new(AtomicBool::new(false));
-        let sink = DownloadSink::file(tmp_path, target_path, placeholder_file);
-        let join = self.start_first_backend(cancel.clone(), sink.clone())?;
+        let sink = DownloadSink::file(target_file);
+        let join = self.start_first_backend(cancel.clone(), sink)?;
 
         Ok(RequestHandle {
             cancel,
             join: Some(join),
-            sink,
         })
     }
 
@@ -226,7 +211,6 @@ impl Downloader {
 pub struct RequestHandle {
     cancel: Arc<AtomicBool>,
     join: Option<JoinHandle<Result<DownloadResult, ResponseError>>>,
-    sink: DownloadSink,
 }
 
 impl RequestHandle {
@@ -241,8 +225,6 @@ impl RequestHandle {
             Ok(r) => r,
             Err(_) => Err(ResponseError::ThreadPanicked),
         }?;
-
-        self.sink.finalize_file()?;
 
         Ok(Response {
             status_code: res.status_code,

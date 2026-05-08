@@ -36,7 +36,7 @@ impl Driver for TcpDriver {
             req,
             sink,
             cancel,
-            |req, sink, cancel, w| download_http(req, sink, cancel, w),
+            download_http,
         ))
     }
 }

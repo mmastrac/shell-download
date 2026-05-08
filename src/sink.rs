@@ -1,12 +1,11 @@
 use std::fs::{File, OpenOptions};
 use std::io::{self, Read, Write};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Command;
 use std::sync::{Arc, Mutex};
 use std::thread;
 
 use crate::ResponseError;
-use crate::tempfile::TmpFile;
 
 /// Where a backend writes the downloaded response body.
 ///
@@ -20,7 +19,7 @@ pub struct DownloadSink {
 
 #[derive(Clone, Debug)]
 enum SinkInner {
-    File((Arc<Mutex<Option<(TmpFile, File)>>>, PathBuf)),
+    File(Arc<Mutex<Option<File>>>),
     Buffer(Arc<Mutex<Vec<u8>>>),
 }
 
@@ -89,13 +88,10 @@ fn copy_stream_maybe_gunzip<R: Read + Send + 'static>(
 }
 
 impl DownloadSink {
-    /// Write the body via a temp file, then persist to `target_path` on [`DownloadSink::finalize_file`].
-    pub fn file(tmp_path: TmpFile, target_path: PathBuf, placeholder_file: File) -> Self {
+    /// Write the body directly to a file.
+    pub fn file(target_file: File) -> Self {
         Self {
-            inner: SinkInner::File((
-                Arc::new(Mutex::new(Some((tmp_path, placeholder_file)))),
-                target_path,
-            )),
+            inner: SinkInner::File(Arc::new(Mutex::new(Some(target_file)))),
         }
     }
 
@@ -112,12 +108,9 @@ impl DownloadSink {
         stream: impl Read + Send + 'static,
     ) -> thread::JoinHandle<Result<u64, ResponseError>> {
         thread::spawn(move || match self.inner {
-            SinkInner::File((arc, _)) => {
-                let guard = arc.lock().unwrap();
-                let tmp = guard
-                    .as_ref()
-                    .ok_or_else(|| ResponseError::Io(io::Error::other("tmp file missing")))?;
-                let mut f = open_body_stream(tmp.0.as_ref())?;
+            SinkInner::File(file) => {
+                let mut guard = file.lock().unwrap();
+                let mut f = guard.take().expect("file already finalized");
                 copy_stream_maybe_gunzip(stream, &mut f)
             }
             SinkInner::Buffer(buf) => {
@@ -126,32 +119,4 @@ impl DownloadSink {
             }
         })
     }
-
-    /// Rename the temp download to the final path (body is already decompressed if it was gzip).
-    pub(crate) fn finalize_file(&self) -> Result<(), ResponseError> {
-        let SinkInner::File((arc, target)) = &self.inner else {
-            return Ok(());
-        };
-        let (tmp_file, placeholder) = arc
-            .lock()
-            .unwrap()
-            .take()
-            .ok_or_else(|| ResponseError::Io(io::Error::other("tmp file already finalized")))?;
-        drop(placeholder);
-        tmp_file.persist(target).map_err(ResponseError::Io)?;
-        Ok(())
-    }
-}
-
-pub(crate) fn open_body_stream(path: &Path) -> io::Result<std::fs::File> {
-    let mut opts = OpenOptions::new();
-    opts.write(true);
-    #[cfg(windows)]
-    {
-        use std::os::windows::fs::OpenOptionsExt as _;
-        const FILE_SHARE_READ: u32 = 0x00000001;
-        const FILE_SHARE_WRITE: u32 = 0x00000002;
-        opts.share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE);
-    }
-    opts.open(path)
 }

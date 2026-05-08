@@ -33,8 +33,6 @@ By default, these features are not enabled, making the crate zero-dependency.
 
  - `url`: Parse URLs using the `url` crate (adds a number of dependencies, but
    makes URL parsing more accurate).
-- `tempfile`: Use the `tempfile` crate to create temporary files. This is
-  recommended.
 
 ## Usage
 

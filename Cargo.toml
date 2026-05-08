@@ -7,7 +7,7 @@ license = "Apache-2.0 OR MIT"
 repository = "https://github.com/mmastrac/shell-download"
 readme = "README.md"
 categories = ["network-programming", "command-line-utilities", "os"]
-rust-version = "1.85"
+rust-version = "1.87"
 description = "Zero-dependency Rust library for downloading a remote URL to a file, string or bytes using commonly-available shell tools."
 
 [lib]
@@ -20,7 +20,6 @@ path = "src/main.rs"
 [features]
 default = []
 url = ["dep:url"]
-tempfile = ["dep:tempfile"]
 
 [profile.release]
 opt-level = 3
@@ -30,7 +29,6 @@ codegen-units = 1
 
 [dependencies]
 url = { version = "2.5", optional = true, default-features = false }
-tempfile = { version = "3", optional = true }
 
 [dev-dependencies]
 dtor = "1.0.1"
