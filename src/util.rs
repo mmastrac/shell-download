@@ -1,5 +1,5 @@
-use std::io::{self, Read as _, Write as _};
-use std::path::{Path, PathBuf};
+use std::io::{self, PipeWriter, Read as _};
+use std::path::PathBuf;
 use std::process::{Child, ChildStderr, ChildStdout, Command, Stdio};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -100,8 +100,7 @@ fn wait_child_into_sink(
             Ok(Some(status)) => {
                 copy_handle
                     .join()
-                    .map_err(|_| ResponseError::ThreadPanicked)?
-                    .map_err(ResponseError::Io)?;
+                    .map_err(|_| ResponseError::ThreadPanicked)??;
 
                 let stderr_bytes = stderr_handle
                     .join()
@@ -186,19 +185,22 @@ where
         }
     };
 
-    Ok(spawn_download_thread(
-        req,
-        sink,
-        cancel,
-        move |req, sink, cancel| {
-            let output =
-                wait_child_into_sink(child, stdout, stderr, sink, cancel, program, req.quiet)?;
-            body(output, req)
-        },
-    ))
+    Ok(thread::spawn(move || {
+        let output =
+            wait_child_into_sink(child, stdout, stderr, &sink, &cancel, program, req.quiet)?;
+        let (status_code, content_encoding) = body(output, &req)?;
+        if cancel.load(Ordering::SeqCst) {
+            return Err(ResponseError::Cancelled);
+        }
+        Ok(DownloadResult {
+            status_code,
+            content_encoding,
+        })
+    }))
 }
 
-/// Spawn a worker thread that runs a backend download function.
+/// Tunnel / streaming body path: worker creates a pipe, drains the read end with
+/// [`DownloadSink::spawn_stdout_drain`], and passes the write end to `download_to_tmp`.
 pub(crate) fn spawn_download_thread<F>(
     req: RequestBuilder,
     sink: DownloadSink,
@@ -212,13 +214,22 @@ where
             &RequestBuilder,
             &DownloadSink,
             &Arc<AtomicBool>,
+            PipeWriter,
         ) -> Result<(u16, Option<ContentEncoding>), ResponseError>,
 {
     thread::spawn(move || {
-        let (status_code, content_encoding) = download_to_tmp(&req, &sink, &cancel)?;
+        let (pipe_reader, pipe_writer) = std::io::pipe().map_err(ResponseError::Io)?;
+        let copy_handle = sink.clone().spawn_stdout_drain(pipe_reader);
+
+        let download_result = download_to_tmp(&req, &sink, &cancel, pipe_writer);
+        let copy_result = copy_handle
+            .join()
+            .map_err(|_| ResponseError::ThreadPanicked)?;
+
+        let (status_code, content_encoding) = download_result?;
+        copy_result?;
 
         if cancel.load(Ordering::SeqCst) {
-            sink.cleanup_on_cancel();
             return Err(ResponseError::Cancelled);
         }
 
@@ -229,139 +240,3 @@ where
     })
 }
 
-/// Decompress gzip bytes using the system `gzip` CLI (stdin → stdout).
-pub(crate) fn gunzip_from_bytes(input: &[u8]) -> Result<Vec<u8>, ResponseError> {
-    let mut cmd = Command::new("gzip");
-    cmd.arg("-dc");
-    let (mut child, mut stdin, mut stdout, mut stderr) =
-        crate::process::spawn_stdin_stdout_stderr(&mut cmd).map_err(ResponseError::Io)?;
-
-    stdin.write_all(input).map_err(ResponseError::Io)?;
-    drop(stdin);
-
-    let stderr_join = thread::spawn(move || {
-        let mut buf = Vec::new();
-        let _ = stderr.read_to_end(&mut buf);
-        buf
-    });
-
-    let mut out = Vec::new();
-    stdout.read_to_end(&mut out).map_err(ResponseError::Io)?;
-
-    let status = child.wait().map_err(ResponseError::Io)?;
-    let stderr_bytes = stderr_join.join().unwrap_or_default();
-
-    if !status.success() {
-        return Err(ResponseError::GzipFailed {
-            exit_code: status.code(),
-            stderr: String::from_utf8_lossy(&stderr_bytes).to_string(),
-        });
-    }
-    Ok(out)
-}
-
-/// Finish an in-memory download: apply gzip detection / decoding like [`finalize_download`].
-pub(crate) fn finalize_memory_body(
-    sink: DownloadSink,
-    content_encoding: Option<ContentEncoding>,
-) -> Result<Vec<u8>, ResponseError> {
-    let bytes = sink.take_buffer_bytes().map_err(ResponseError::Io)?;
-    let declared_gzip = matches!(content_encoding, Some(ContentEncoding::Gzip));
-    let looks_gzip = bytes.len() >= 2 && bytes[0] == 0x1f && bytes[1] == 0x8b;
-    if declared_gzip || looks_gzip {
-        gunzip_from_bytes(&bytes)
-    } else {
-        Ok(bytes)
-    }
-}
-
-/// Move or decode the temp file into its final location.
-pub(crate) fn finalize_download(
-    tmp_file: crate::tempfile::TmpFile,
-    target_path: &Path,
-    content_encoding: Option<ContentEncoding>,
-) -> Result<(), ResponseError> {
-    let declared_gzip = matches!(content_encoding, Some(ContentEncoding::Gzip));
-    let needs_gunzip = declared_gzip || file_looks_gzipped(&tmp_file).unwrap_or(false);
-    if needs_gunzip {
-        gunzip_to_target(&tmp_file, target_path)?;
-    } else {
-        tmp_file.persist(target_path).map_err(ResponseError::Io)?;
-    }
-    Ok(())
-}
-
-/// True if the file begins with gzip magic (`read` uses share flags on Windows).
-pub(crate) fn file_looks_gzipped(path: impl AsRef<Path>) -> io::Result<bool> {
-    let path = path.as_ref();
-    let mut opts = std::fs::OpenOptions::new();
-    opts.read(true);
-    #[cfg(windows)]
-    {
-        use std::os::windows::fs::OpenOptionsExt as _;
-        const FILE_SHARE_READ: u32 = 0x00000001;
-        const FILE_SHARE_WRITE: u32 = 0x00000002;
-        opts.share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE);
-    }
-    let mut f = opts.open(path)?;
-    let mut b = [0u8; 2];
-    let n = f.read(&mut b)?;
-    Ok(n == 2 && b == [0x1f, 0x8b])
-}
-
-pub(crate) fn gunzip_to_target(
-    src: impl AsRef<Path>,
-    dst: impl AsRef<Path>,
-) -> Result<(), ResponseError> {
-    let src = src.as_ref();
-    let dst = dst.as_ref();
-
-    let mut cmd = Command::new("gzip");
-    cmd.arg("-dc")
-        .arg(src)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    let mut child = cmd.spawn().map_err(ResponseError::Io)?;
-
-    let mut stdout = child
-        .stdout
-        .take()
-        .ok_or_else(|| ResponseError::Io(io::Error::other("missing gzip stdout")))?;
-    let mut stderr = child
-        .stderr
-        .take()
-        .ok_or_else(|| ResponseError::Io(io::Error::other("missing gzip stderr")))?;
-
-    // Read stderr concurrently to avoid pipe deadlocks if gzip is noisy.
-    let stderr_join = thread::spawn(move || {
-        let mut buf = Vec::new();
-        let _ = stderr.read_to_end(&mut buf);
-        buf
-    });
-
-    // Write to a temp file and then atomically rename into place.
-    let parent = dst.parent().unwrap_or_else(|| Path::new("."));
-    let hint = dst.file_name().and_then(|s| s.to_str()).unwrap_or("gunzip");
-    let tmp_dst = crate::tempfile::create_tmp_file_in_path("gunzip", None, parent, hint)?;
-    let mut out_file = std::fs::File::options()
-        .write(true)
-        .truncate(true)
-        .open(&tmp_dst)
-        .map_err(ResponseError::Io)?;
-
-    io::copy(&mut stdout, &mut out_file).map_err(ResponseError::Io)?;
-    out_file.flush().map_err(ResponseError::Io)?;
-
-    let status = child.wait().map_err(ResponseError::Io)?;
-    let stderr_bytes = stderr_join.join().unwrap_or_default();
-
-    if !status.success() {
-        return Err(ResponseError::GzipFailed {
-            exit_code: status.code(),
-            stderr: String::from_utf8_lossy(&stderr_bytes).to_string(),
-        });
-    }
-
-    tmp_dst.persist(dst).map_err(ResponseError::Io)?;
-    Ok(())
-}

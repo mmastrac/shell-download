@@ -32,21 +32,24 @@ impl Driver for TcpDriver {
             return Err(StartError::NoDriverFound);
         }
 
-        Ok(util::spawn_download_thread(
-            req,
-            sink,
-            cancel,
-            download_http,
-        ))
+        Ok(util::spawn_download_thread(req, sink, cancel, |req, sink, cancel, w| {
+            download_http(req, sink, cancel, w)
+        }))
     }
 }
 
 fn download_http(
     req: &RequestBuilder,
-    sink: &DownloadSink,
+    _sink: &DownloadSink,
     cancel: &Arc<AtomicBool>,
+    pipe_writer: std::io::PipeWriter,
 ) -> Result<(u16, Option<ContentEncoding>), ResponseError> {
-    http11::redirect_download(req, sink, cancel, fetch_http_only)
+    http11::redirect_download(
+        req.clone(),
+        Arc::clone(cancel),
+        pipe_writer,
+        fetch_http_only,
+    )
 }
 
 fn fetch_http_only(

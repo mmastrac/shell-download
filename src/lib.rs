@@ -9,9 +9,9 @@ mod util;
 
 pub use sink::DownloadSink;
 
-use std::cell::Cell;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
@@ -124,17 +124,16 @@ impl RequestBuilder {
             .map_err(|e| ResponseError::Start(StartError::Url(e.to_string())))?;
 
         let cancel = Arc::new(AtomicBool::new(false));
-        let memory_root = DownloadSink::buffer();
+        let buffer = Arc::new(Mutex::new(Vec::new()));
+        let memory_root = DownloadSink::buffer(buffer.clone());
         let join = self
             .start_first_backend(Arc::clone(&cancel), memory_root.clone())
             .map_err(ResponseError::Start)?;
 
-        let res = match join.join() {
-            Ok(r) => r,
-            Err(_) => Err(ResponseError::ThreadPanicked),
-        }?;
+        join.join()
+            .map_err(|_| ResponseError::ThreadPanicked)??;
 
-        util::finalize_memory_body(memory_root, res.content_encoding)
+        Ok(std::mem::take(&mut *buffer.lock().unwrap()))
     }
 
     /// Start the download in a background thread.
@@ -155,25 +154,38 @@ impl RequestBuilder {
         // URL preflight: fail early with a message useful to callers.
         let url = url_parser::Url::new(&self.url).map_err(|e| StartError::Url(e.to_string()))?;
 
-        let parent = target_path.parent().unwrap_or_else(|| Path::new("."));
-        let hint = target_path
-            .file_name()
-            .and_then(|s| s.to_str())
-            .unwrap_or("download");
+        let file_name = target_path.file_name().ok_or_else(|| {
+            StartError::IoError(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "download target path must include a file name",
+            ))
+        })?;
+
+        // `canonicalize` requires the final path to exist; the output file is created on success,
+        // so resolve the parent directory only and join the file name.
+        let parent = match target_path.parent() {
+            None => std::env::current_dir().map_err(StartError::IoError)?,
+            Some(p) if p.as_os_str().is_empty() => {
+                std::env::current_dir().map_err(StartError::IoError)?
+            }
+            Some(p) => p.canonicalize().map_err(StartError::IoError)?,
+        };
+
+        let target_path = parent.join(file_name);
+
+        let hint = file_name.to_str().unwrap_or("download");
         let tmp_path =
-            crate::tempfile::create_tmp_file_in_path("download", Some(&url), parent, hint)
+            crate::tempfile::create_tmp_file_in_path("download", Some(&url), parent.as_path(), hint)
                 .map_err(StartError::IoError)?;
 
         let cancel = Arc::new(AtomicBool::new(false));
-        let body_path = tmp_path.as_ref().to_path_buf();
-        let join =
-            self.start_first_backend(cancel.clone(), DownloadSink::file(body_path.clone()))?;
+        let sink = DownloadSink::file(tmp_path, target_path);
+        let join = self.start_first_backend(cancel.clone(), sink.clone())?;
 
         Ok(RequestHandle {
             cancel,
             join: Some(join),
-            target_path,
-            tmp_path: Some(tmp_path),
+            sink,
         })
     }
 
@@ -244,8 +256,7 @@ impl Downloader {
 pub struct RequestHandle {
     cancel: Arc<AtomicBool>,
     join: Option<JoinHandle<Result<DownloadResult, ResponseError>>>,
-    target_path: std::path::PathBuf,
-    tmp_path: Option<crate::tempfile::TmpFile>,
+    sink: DownloadSink,
 }
 
 impl RequestHandle {
@@ -254,15 +265,15 @@ impl RequestHandle {
         self.cancel.store(true, Ordering::SeqCst);
     }
 
-    /// Wait for completion and finalize the output file.
+    /// Wait for completion and move the temp download to the target path.
     pub fn join(mut self) -> Result<Response, ResponseError> {
         let res = match self.join.take().expect("join called once").join() {
             Ok(r) => r,
             Err(_) => Err(ResponseError::ThreadPanicked),
         }?;
 
-        let tmp_path = self.tmp_path.take().expect("tmp_path present");
-        util::finalize_download(tmp_path, &self.target_path, res.content_encoding)?;
+        self.sink.finalize_file()?;
+
         Ok(Response {
             status_code: res.status_code,
         })

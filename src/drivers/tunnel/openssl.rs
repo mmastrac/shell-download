@@ -45,12 +45,9 @@ impl OpenSslDriver {
         sink: DownloadSink,
         cancel: Arc<AtomicBool>,
     ) -> Result<JoinHandle<Result<DownloadResult, ResponseError>>, StartError> {
-        Ok(util::spawn_download_thread(
-            req,
-            sink,
-            cancel,
-            move |req, sink, cancel| download_https_with_first_child(req, sink, cancel),
-        ))
+        Ok(util::spawn_download_thread(req, sink, cancel, |req, sink, cancel, w| {
+            download_https_with_first_child(req, sink, cancel, w)
+        }))
     }
 }
 
@@ -71,10 +68,11 @@ fn openssl_s_client_command(url: &Url) -> Command {
 
 fn download_https_with_first_child(
     req: &RequestBuilder,
-    sink: &DownloadSink,
+    _sink: &DownloadSink,
     cancel: &Arc<AtomicBool>,
+    pipe_writer: std::io::PipeWriter,
 ) -> Result<(u16, Option<ContentEncoding>), ResponseError> {
-    http11::redirect_download(req, sink, cancel, |url, req, cancel| {
+    http11::redirect_download(req.clone(), Arc::clone(cancel), pipe_writer, |url, req, cancel| {
         if url.scheme != "https" {
             return Err(ResponseError::UnsupportedScheme);
         }

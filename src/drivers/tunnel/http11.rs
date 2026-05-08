@@ -1,12 +1,12 @@
 //! Shared HTTP/1.1 helpers for minimal TCP and OpenSSL `s_client` backends.
 
-use std::io::{self, Read};
+use std::io::{self, Read, Write};
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
 };
 
-use crate::{ContentEncoding, DownloadSink, RequestBuilder, ResponseError, url_parser::Url, util};
+use crate::{ContentEncoding, RequestBuilder, ResponseError, url_parser::Url, util};
 
 pub(crate) type HttpResponseParts = (u16, Vec<(String, String)>, Vec<u8>);
 
@@ -45,11 +45,11 @@ pub(crate) fn read_to_vec_cancelled(
     Ok(buf)
 }
 
-/// Follow redirects and write the final body to `sink`. `fetch` performs one HTTP exchange.
+/// Follow redirects and write the final response body to `pipe_writer`. `fetch` performs one HTTP exchange.
 pub(crate) fn redirect_download(
-    req: &RequestBuilder,
-    sink: &DownloadSink,
-    cancel: &Arc<AtomicBool>,
+    req: RequestBuilder,
+    cancel: Arc<AtomicBool>,
+    mut pipe_writer: std::io::PipeWriter,
     mut fetch: impl FnMut(
         &Url,
         &RequestBuilder,
@@ -65,7 +65,7 @@ pub(crate) fn redirect_download(
 
     loop {
         let url = Url::new(&current_url).map_err(|_| ResponseError::InvalidUrl)?;
-        let (status_code, headers, body) = fetch(&url, req, cancel)?;
+        let (status_code, headers, body) = fetch(&url, &req, &cancel)?;
 
         if is_redirect(status_code) && redirects_left > 0 {
             if let Some(loc) = header_value(&headers, "location") {
@@ -95,7 +95,9 @@ pub(crate) fn redirect_download(
             body
         };
 
-        sink.write_all_body(&body).map_err(ResponseError::Io)?;
+        pipe_writer
+            .write_all(&body)
+            .map_err(ResponseError::Io)?;
         return Ok((status_code, content_encoding));
     }
 }
