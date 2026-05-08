@@ -35,12 +35,17 @@ impl Driver for CurlDriver {
             cmd.arg("-H").arg(format!("{k}: {v}"));
         }
 
-        util::spawn_download_cmd_thread(cmd, "curl", req, sink, cancel, move |output, _req| {
-            let code_str = String::from_utf8_lossy(&output.stderr).trim().to_string();
-            let code: u16 = code_str
-                .parse()
-                .map_err(|_| ResponseError::BadStatusCode(code_str))?;
-            Ok((code, None))
-        })
+        util::spawn_download_cmd_thread(cmd, "curl", req, sink, cancel, download_curl)
     }
+}
+
+fn download_curl(
+    output: std::process::Output,
+    _req: &RequestBuilder,
+) -> Result<(u16, Option<crate::ContentEncoding>), ResponseError> {
+    let code_str = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    let code: u16 = code_str
+        .parse()
+        .map_err(|_| ResponseError::BadStatusCode(code_str))?;
+    Ok((code, None))
 }

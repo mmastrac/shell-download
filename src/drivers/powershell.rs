@@ -128,18 +128,7 @@ fn start_inner(
             req.clone(),
             sink.clone(),
             Arc::clone(&cancel),
-            move |output, _req| {
-                let stderr_str = String::from_utf8_lossy(&output.stderr).to_string();
-                let status_line = stderr_str
-                    .lines()
-                    .find_map(|line| line.trim().strip_prefix(PS_STATUS_PREFIX).map(str::trim));
-                let code_str = status_line.unwrap_or("").to_string();
-                let status_code: u16 = code_str
-                    .parse()
-                    .map_err(|_| ResponseError::BadStatusCode(code_str))?;
-
-                Ok((status_code, None))
-            },
+            download_pwsh,
         ) {
             Ok(h) => return Ok(h),
             Err(StartError::NoDriverFound) => {}
@@ -156,6 +145,22 @@ fn start_inner(
         return Err(StartError::IoError(e));
     }
     Err(StartError::NoDriverFound)
+}
+
+fn download_pwsh(
+    output: std::process::Output,
+    _req: &RequestBuilder,
+) -> Result<(u16, Option<crate::ContentEncoding>), ResponseError> {
+    let stderr_str = String::from_utf8_lossy(&output.stderr).to_string();
+    let status_line = stderr_str
+        .lines()
+        .find_map(|line| line.trim().strip_prefix(PS_STATUS_PREFIX).map(str::trim));
+    let code_str = status_line.unwrap_or("").to_string();
+    let status_code: u16 = code_str
+        .parse()
+        .map_err(|_| ResponseError::BadStatusCode(code_str))?;
+
+    Ok((status_code, None))
 }
 
 /// Escape a value for a single-quoted PowerShell string.

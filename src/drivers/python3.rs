@@ -118,12 +118,17 @@ sys.exit(_main(sys.argv))
             cmd.arg(format!("{k}: {v}"));
         }
 
-        util::spawn_download_cmd_thread(cmd, exe, req, sink, cancel, move |output, _req| {
-            let code_str = String::from_utf8_lossy(&output.stderr).trim().to_string();
-            let code: u16 = code_str
-                .parse()
-                .map_err(|_| ResponseError::BadStatusCode(code_str))?;
-            Ok((code, None))
-        })
+        util::spawn_download_cmd_thread(cmd, exe, req, sink, cancel, download_python3)
     }
+}
+
+fn download_python3(
+    output: std::process::Output,
+    _req: &RequestBuilder,
+) -> Result<(u16, Option<crate::ContentEncoding>), ResponseError> {
+    let code_str = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    let code: u16 = code_str
+        .parse()
+        .map_err(|_| ResponseError::BadStatusCode(code_str))?;
+    Ok((code, None))
 }

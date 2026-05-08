@@ -35,22 +35,26 @@ impl Driver for WgetDriver {
         for (k, v) in util::add_common_headers(&req) {
             cmd.arg("--header").arg(format!("{k}: {v}"));
         }
+        util::spawn_download_cmd_thread(cmd, "wget", req, sink, cancel, download_wget)
+    }
+}
 
-        util::spawn_download_cmd_thread(cmd, "wget", req, sink, cancel, move |output, _req| {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            let mut last_code: Option<u16> = None;
-            for line in stderr.lines() {
-                let line = line.trim();
-                if let Some(rest) = line.strip_prefix("HTTP/") {
-                    let parts: Vec<&str> = rest.split_whitespace().collect();
-                    if parts.len() >= 2 {
-                        if let Ok(code) = parts[1].parse::<u16>() {
-                            last_code = Some(code);
-                        }
-                    }
+fn download_wget(
+    output: std::process::Output,
+    _req: &RequestBuilder,
+) -> Result<(u16, Option<crate::ContentEncoding>), ResponseError> {
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let mut last_code: Option<u16> = None;
+    for line in stderr.lines() {
+        let line = line.trim();
+        if let Some(rest) = line.strip_prefix("HTTP/") {
+            let parts: Vec<&str> = rest.split_whitespace().collect();
+            if parts.len() >= 2 {
+                if let Ok(code) = parts[1].parse::<u16>() {
+                    last_code = Some(code);
                 }
             }
-            Ok((last_code.unwrap_or(200), None))
-        })
+        }
     }
+    Ok((last_code.unwrap_or(200), None))
 }
