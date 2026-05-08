@@ -1,4 +1,4 @@
-use std::fs::OpenOptions;
+use std::fs::{File, OpenOptions};
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -20,7 +20,7 @@ pub struct DownloadSink {
 
 #[derive(Clone, Debug)]
 enum SinkInner {
-    File((Arc<Mutex<Option<TmpFile>>>, PathBuf)),
+    File((Arc<Mutex<Option<(TmpFile, File)>>>, PathBuf)),
     Buffer(Arc<Mutex<Vec<u8>>>),
 }
 
@@ -90,9 +90,12 @@ fn copy_stream_maybe_gunzip<R: Read + Send + 'static>(
 
 impl DownloadSink {
     /// Write the body via a temp file, then persist to `target_path` on [`DownloadSink::finalize_file`].
-    pub fn file(tmp_path: TmpFile, target_path: PathBuf) -> Self {
+    pub fn file(tmp_path: TmpFile, target_path: PathBuf, placeholder_file: File) -> Self {
         Self {
-            inner: SinkInner::File((Arc::new(Mutex::new(Some(tmp_path))), target_path)),
+            inner: SinkInner::File((
+                Arc::new(Mutex::new(Some((tmp_path, placeholder_file)))),
+                target_path,
+            )),
         }
     }
 
@@ -114,7 +117,7 @@ impl DownloadSink {
                 let tmp = guard
                     .as_ref()
                     .ok_or_else(|| ResponseError::Io(io::Error::other("tmp file missing")))?;
-                let mut f = open_body_stream(tmp.as_ref())?;
+                let mut f = open_body_stream(tmp.0.as_ref())?;
                 copy_stream_maybe_gunzip(stream, &mut f)
             }
             SinkInner::Buffer(buf) => {
@@ -129,12 +132,13 @@ impl DownloadSink {
         let SinkInner::File((arc, target)) = &self.inner else {
             return Ok(());
         };
-        let tmp = arc
+        let (tmp_file, placeholder) = arc
             .lock()
             .unwrap()
             .take()
             .ok_or_else(|| ResponseError::Io(io::Error::other("tmp file already finalized")))?;
-        tmp.persist(target).map_err(ResponseError::Io)?;
+        drop(placeholder);
+        tmp_file.persist(target).map_err(ResponseError::Io)?;
         Ok(())
     }
 }

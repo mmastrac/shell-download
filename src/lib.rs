@@ -9,13 +9,11 @@ mod util;
 
 pub use sink::DownloadSink;
 
+use std::fs::OpenOptions;
 use std::io;
-use std::path::{Path, PathBuf};
-use std::sync::Mutex;
-use std::sync::{
-    Arc,
-    atomic::{AtomicBool, Ordering},
-};
+use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -137,22 +135,16 @@ impl RequestBuilder {
 
     /// Start the download in a background thread.
     pub fn start(self, target_path: impl AsRef<Path>) -> Result<RequestHandle, StartError> {
-        let target_path = target_path.as_ref().to_path_buf();
-
-        if let Some(parent) = target_path.parent() {
-            if !parent.as_os_str().is_empty() {
-                std::fs::create_dir_all(parent).map_err(StartError::IoError)?;
-            }
-        }
-
-        let _ = std::fs::remove_file(&target_path);
-        self.start_internal(target_path)
-    }
-
-    fn start_internal(self, target_path: PathBuf) -> Result<RequestHandle, StartError> {
         // URL preflight: fail early with a message useful to callers.
         let url = url_parser::Url::new(&self.url).map_err(|e| StartError::Url(e.to_string()))?;
 
+        let target_path = target_path.as_ref().to_path_buf();
+        let parent_path = target_path.parent().unwrap();
+        let placeholder_file = OpenOptions::new()
+            .create(true)
+            .truncate(true)
+            .write(true)
+            .open(&target_path)?;
         let file_name = target_path.file_name().ok_or_else(|| {
             StartError::IoError(io::Error::new(
                 io::ErrorKind::InvalidInput,
@@ -160,29 +152,13 @@ impl RequestBuilder {
             ))
         })?;
 
-        // `canonicalize` requires the final path to exist; the output file is created on success,
-        // so resolve the parent directory only and join the file name.
-        let parent = match target_path.parent() {
-            None => std::env::current_dir().map_err(StartError::IoError)?,
-            Some(p) if p.as_os_str().is_empty() => {
-                std::env::current_dir().map_err(StartError::IoError)?
-            }
-            Some(p) => p.canonicalize().map_err(StartError::IoError)?,
-        };
-
-        let target_path = parent.join(file_name);
-
         let hint = file_name.to_str().unwrap_or("download");
-        let tmp_path = crate::tempfile::create_tmp_file_in_path(
-            "download",
-            Some(&url),
-            parent.as_path(),
-            hint,
-        )
-        .map_err(StartError::IoError)?;
+        let tmp_path =
+            crate::tempfile::create_tmp_file_in_path("download", Some(&url), parent_path, hint)
+                .map_err(StartError::IoError)?;
 
         let cancel = Arc::new(AtomicBool::new(false));
-        let sink = DownloadSink::file(tmp_path, target_path);
+        let sink = DownloadSink::file(tmp_path, target_path, placeholder_file);
         let join = self.start_first_backend(cancel.clone(), sink.clone())?;
 
         Ok(RequestHandle {
