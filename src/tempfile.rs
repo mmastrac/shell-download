@@ -1,6 +1,5 @@
 /// A simple and reasonably secure stdlib-only alternative if `tempfile` isn't
 /// available.
-#[cfg(not(feature = "tempfile"))]
 mod simple {
     use std::fs::{File, OpenOptions};
     use std::hash::{BuildHasher, Hash, Hasher, RandomState};
@@ -11,7 +10,7 @@ mod simple {
     use crate::url_parser::Url;
 
     #[derive(Debug)]
-    pub(crate) struct TmpFile {
+    pub struct TmpFile {
         path: Option<PathBuf>,
         file: Option<File>,
     }

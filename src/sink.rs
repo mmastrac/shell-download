@@ -1,12 +1,12 @@
 use std::fs::OpenOptions;
-use std::io::{self, Cursor, Read, Write};
+use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{Arc, Mutex};
 use std::thread;
 
-use crate::tempfile::TmpFile;
 use crate::ResponseError;
+use crate::tempfile::TmpFile;
 
 /// Where a backend writes the downloaded response body.
 ///
@@ -22,30 +22,6 @@ pub struct DownloadSink {
 enum SinkInner {
     File((Arc<Mutex<Option<TmpFile>>>, PathBuf)),
     Buffer(Arc<Mutex<Vec<u8>>>),
-}
-
-/// Reads a leading prefix (from the initial peek), then the inner reader.
-struct PrependReader<R> {
-    prefix: Cursor<Vec<u8>>,
-    inner: R,
-}
-
-impl<R> PrependReader<R> {
-    fn new(prefix: Vec<u8>, inner: R) -> Self {
-        Self {
-            prefix: Cursor::new(prefix),
-            inner,
-        }
-    }
-}
-
-impl<R: Read> Read for PrependReader<R> {
-    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        if self.prefix.position() < self.prefix.get_ref().len() as u64 {
-            return self.prefix.read(buf);
-        }
-        self.inner.read(buf)
-    }
 }
 
 fn sniff_is_gzip(n: usize, peek: &[u8; 2]) -> bool {
@@ -108,10 +84,8 @@ fn copy_stream_maybe_gunzip<R: Read + Send + 'static>(
     if sniff_is_gzip(n, &peek) {
         return copy_gzip_stream(stream, peek, out);
     }
-    let prefix = peek[..n].to_vec();
-    let mut reader = PrependReader::new(prefix, stream);
-    io::copy(&mut reader, &mut out)
-        .map_err(ResponseError::Io)
+    out.write_all(&peek[..n]).map_err(ResponseError::Io)?;
+    io::copy(&mut stream, &mut out).map_err(ResponseError::Io)
 }
 
 impl DownloadSink {
@@ -134,20 +108,18 @@ impl DownloadSink {
         self,
         stream: impl Read + Send + 'static,
     ) -> thread::JoinHandle<Result<u64, ResponseError>> {
-        thread::spawn(move || {
-            match self.inner {
-                SinkInner::File((arc, _)) => {
-                    let guard = arc.lock().unwrap();
-                    let tmp = guard
-                        .as_ref()
-                        .ok_or_else(|| ResponseError::Io(io::Error::other("tmp file missing")))?;
-                    let mut f = open_body_stream(tmp.as_ref())?;
-                    copy_stream_maybe_gunzip(stream, &mut f)
-                }
-                SinkInner::Buffer(buf) => {
-                    let mut g = buf.lock().unwrap();
-                    copy_stream_maybe_gunzip(stream, &mut *g)
-                }
+        thread::spawn(move || match self.inner {
+            SinkInner::File((arc, _)) => {
+                let guard = arc.lock().unwrap();
+                let tmp = guard
+                    .as_ref()
+                    .ok_or_else(|| ResponseError::Io(io::Error::other("tmp file missing")))?;
+                let mut f = open_body_stream(tmp.as_ref())?;
+                copy_stream_maybe_gunzip(stream, &mut f)
+            }
+            SinkInner::Buffer(buf) => {
+                let mut g = buf.lock().unwrap();
+                copy_stream_maybe_gunzip(stream, &mut *g)
             }
         })
     }

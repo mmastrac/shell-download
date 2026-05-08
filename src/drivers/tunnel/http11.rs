@@ -95,9 +95,7 @@ pub(crate) fn redirect_download(
             body
         };
 
-        pipe_writer
-            .write_all(&body)
-            .map_err(ResponseError::Io)?;
+        pipe_writer.write_all(&body).map_err(ResponseError::Io)?;
         return Ok((status_code, content_encoding));
     }
 }

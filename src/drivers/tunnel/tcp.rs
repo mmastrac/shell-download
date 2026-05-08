@@ -32,9 +32,12 @@ impl Driver for TcpDriver {
             return Err(StartError::NoDriverFound);
         }
 
-        Ok(util::spawn_download_thread(req, sink, cancel, |req, sink, cancel, w| {
-            download_http(req, sink, cancel, w)
-        }))
+        Ok(util::spawn_download_thread(
+            req,
+            sink,
+            cancel,
+            |req, sink, cancel, w| download_http(req, sink, cancel, w),
+        ))
     }
 }
 

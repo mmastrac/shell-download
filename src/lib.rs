@@ -130,8 +130,7 @@ impl RequestBuilder {
             .start_first_backend(Arc::clone(&cancel), memory_root.clone())
             .map_err(ResponseError::Start)?;
 
-        join.join()
-            .map_err(|_| ResponseError::ThreadPanicked)??;
+        join.join().map_err(|_| ResponseError::ThreadPanicked)??;
 
         Ok(std::mem::take(&mut *buffer.lock().unwrap()))
     }
@@ -174,9 +173,13 @@ impl RequestBuilder {
         let target_path = parent.join(file_name);
 
         let hint = file_name.to_str().unwrap_or("download");
-        let tmp_path =
-            crate::tempfile::create_tmp_file_in_path("download", Some(&url), parent.as_path(), hint)
-                .map_err(StartError::IoError)?;
+        let tmp_path = crate::tempfile::create_tmp_file_in_path(
+            "download",
+            Some(&url),
+            parent.as_path(),
+            hint,
+        )
+        .map_err(StartError::IoError)?;
 
         let cancel = Arc::new(AtomicBool::new(false));
         let sink = DownloadSink::file(tmp_path, target_path);
@@ -230,23 +233,14 @@ impl RequestBuilder {
 
 impl Downloader {
     pub(crate) fn driver(self) -> &'static dyn drivers::Driver {
-        static CURL: drivers::curl::CurlDriver = drivers::curl::CurlDriver;
-        static WGET: drivers::wget::WgetDriver = drivers::wget::WgetDriver;
-        static POWERSHELL: drivers::powershell::PowerShellDriver =
-            drivers::powershell::PowerShellDriver;
-        static PYTHON3: drivers::python3::Python3Driver = drivers::python3::Python3Driver;
-        static TUNNEL: drivers::tunnel::TunnelDriver = drivers::tunnel::TunnelDriver;
-        static TCP: drivers::tunnel::TcpDriver = drivers::tunnel::TcpDriver;
-        static OPENSSL: drivers::tunnel::OpenSslDriver = drivers::tunnel::OpenSslDriver;
-
         match self {
-            Downloader::Curl => &CURL,
-            Downloader::Wget => &WGET,
-            Downloader::PowerShell => &POWERSHELL,
-            Downloader::Python3 => &PYTHON3,
-            Downloader::Tunnel => &TUNNEL,
-            Downloader::Tcp => &TCP,
-            Downloader::OpenSSL => &OPENSSL,
+            Downloader::Curl => &drivers::curl::CurlDriver,
+            Downloader::Wget => &drivers::wget::WgetDriver,
+            Downloader::PowerShell => &drivers::powershell::PowerShellDriver,
+            Downloader::Python3 => &drivers::python3::Python3Driver,
+            Downloader::Tunnel => &drivers::tunnel::TunnelDriver,
+            Downloader::Tcp => &drivers::tunnel::TcpDriver,
+            Downloader::OpenSSL => &drivers::tunnel::OpenSslDriver,
         }
     }
 }
