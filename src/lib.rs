@@ -15,6 +15,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 
+use crate::drivers::Request;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 /// A supported download backend.
 pub enum Downloader {
@@ -53,6 +55,15 @@ pub enum ContentEncoding {
 }
 
 #[derive(Debug, Clone)]
+/// Low-level download result prior to finalizing the output file.
+pub struct DownloadResult {
+    /// HTTP status code (best-effort).
+    pub status_code: u16,
+    /// Response content encoding, if known.
+    pub content_encoding: Option<ContentEncoding>,
+}
+
+#[derive(Debug, Clone)]
 /// Builder for a single download request.
 pub struct RequestBuilder {
     pub(crate) url: String,
@@ -60,15 +71,6 @@ pub struct RequestBuilder {
     pub(crate) preferred: Vec<Downloader>,
     pub(crate) follow_redirects: bool,
     pub(crate) quiet: Quiet,
-}
-
-#[derive(Debug, Clone)]
-/// Low-level download result prior to finalizing the output file.
-pub struct DownloadResult {
-    /// HTTP status code (best-effort).
-    pub status_code: u16,
-    /// Response content encoding, if known.
-    pub content_encoding: Option<ContentEncoding>,
 }
 
 impl RequestBuilder {
@@ -135,7 +137,7 @@ impl RequestBuilder {
     /// Start the download in a background thread.
     pub fn start(self, target_path: impl AsRef<Path>) -> Result<RequestHandle, StartError> {
         // URL preflight: fail early with a message useful to callers.
-        let url = url_parser::Url::new(&self.url).map_err(|e| StartError::Url(e.to_string()))?;
+        let _ = url_parser::Url::new(&self.url).map_err(|e| StartError::Url(e.to_string()))?;
 
         let target_file = OpenOptions::new()
             .create(true)
@@ -162,10 +164,17 @@ impl RequestBuilder {
         let mut saw_non_not_found: Option<io::Error> = None;
         let mut saw_any_not_found = false;
 
+        let request = Request {
+            url: url_parser::Url::new(&self.url).map_err(|e| StartError::Url(e.to_string()))?,
+            headers: self.headers.clone(),
+            follow_redirects: self.follow_redirects,
+            quiet: self.quiet,
+        };
+
         for d in candidate_downloaders(&self.preferred) {
             match d
                 .driver()
-                .start(self.clone(), sink.clone(), Arc::clone(&cancel))
+                .start(request.clone(), sink.clone(), Arc::clone(&cancel))
             {
                 Ok(join) => return Ok(join),
                 Err(StartError::Url(msg)) => return Err(StartError::Url(msg)),

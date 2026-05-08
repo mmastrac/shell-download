@@ -8,11 +8,12 @@ use std::thread::JoinHandle;
 use std::time::Duration;
 
 use crate::{
-    ContentEncoding, DownloadResult, DownloadSink, Quiet, RequestBuilder, ResponseError, StartError,
+    ContentEncoding, DownloadResult, DownloadSink, Quiet, ResponseError, StartError,
+    drivers::Request,
 };
 
 /// Ensure common headers are present (notably gzip support).
-pub(crate) fn add_common_headers(req: &RequestBuilder) -> Vec<(String, String)> {
+pub(crate) fn add_common_headers(req: &Request) -> Vec<(String, String)> {
     let mut headers = req.headers.clone();
     if !headers
         .iter()
@@ -139,7 +140,7 @@ fn wait_child_into_sink(
 pub(crate) fn spawn_download_cmd_thread<F>(
     cmd: Command,
     program: &'static str,
-    req: RequestBuilder,
+    req: Request,
     sink: DownloadSink,
     cancel: Arc<AtomicBool>,
     body: F,
@@ -149,7 +150,7 @@ where
         + 'static
         + FnOnce(
             std::process::Output,
-            &RequestBuilder,
+            &Request,
         ) -> Result<(u16, Option<ContentEncoding>), ResponseError>,
 {
     let mut child = {
@@ -202,7 +203,7 @@ where
 /// Tunnel / streaming body path: worker creates a pipe, drains the read end with
 /// [`DownloadSink::spawn_stdout_drain`], and passes the write end to `download_to_tmp`.
 pub(crate) fn spawn_download_thread<F>(
-    req: RequestBuilder,
+    req: Request,
     sink: DownloadSink,
     cancel: Arc<AtomicBool>,
     download_to_tmp: F,
@@ -211,7 +212,7 @@ where
     F: Send
         + 'static
         + FnOnce(
-            &RequestBuilder,
+            &Request,
             &DownloadSink,
             &Arc<AtomicBool>,
             PipeWriter,

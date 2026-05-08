@@ -2,7 +2,9 @@ use std::sync::{Arc, atomic::AtomicBool};
 use std::thread::JoinHandle;
 
 use crate::{
-    DownloadResult, DownloadSink, RequestBuilder, ResponseError, StartError, drivers::Driver, util,
+    DownloadResult, DownloadSink, ResponseError, StartError,
+    drivers::{Driver, Request},
+    util,
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -13,7 +15,7 @@ impl Driver for PowerShellDriver {
     /// Start a download using PowerShell.
     fn start(
         &self,
-        req: RequestBuilder,
+        req: Request,
         sink: DownloadSink,
         cancel: Arc<AtomicBool>,
     ) -> Result<JoinHandle<Result<DownloadResult, ResponseError>>, StartError> {
@@ -73,7 +75,7 @@ exit $exitCode;
 
 /// Implementation for the PowerShell backend.
 fn start_inner(
-    req: RequestBuilder,
+    req: Request,
     sink: DownloadSink,
     cancel: Arc<AtomicBool>,
 ) -> Result<JoinHandle<Result<DownloadResult, ResponseError>>, StartError> {
@@ -119,7 +121,7 @@ fn start_inner(
     Err(StartError::NoDriverFound)
 }
 
-fn generate_powershell_script(req: &RequestBuilder) -> String {
+fn generate_powershell_script(req: &Request) -> String {
     let mut ps_headers = String::new();
     for (k, v) in util::add_common_headers(req) {
         ps_headers.push('\'');
@@ -132,7 +134,7 @@ fn generate_powershell_script(req: &RequestBuilder) -> String {
     headers_expr.push_str("@{");
     headers_expr.push_str(&ps_headers);
     headers_expr.push('}');
-    let url = escape_ps(&req.url);
+    let url = escape_ps(&req.url.to_url_string());
     let max_redir = if req.follow_redirects { 10 } else { 0 };
 
     let mut script = String::new();
@@ -154,7 +156,7 @@ fn generate_powershell_script(req: &RequestBuilder) -> String {
 
 fn download_pwsh(
     output: std::process::Output,
-    _req: &RequestBuilder,
+    _req: &Request,
 ) -> Result<(u16, Option<crate::ContentEncoding>), ResponseError> {
     let stderr_str = String::from_utf8_lossy(&output.stderr).to_string();
     let status_line = stderr_str

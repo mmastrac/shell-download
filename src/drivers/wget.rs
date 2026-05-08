@@ -3,7 +3,9 @@ use std::sync::{Arc, atomic::AtomicBool};
 use std::thread::JoinHandle;
 
 use crate::{
-    DownloadResult, DownloadSink, RequestBuilder, ResponseError, StartError, drivers::Driver, util,
+    DownloadResult, DownloadSink, ResponseError, StartError,
+    drivers::{Driver, Request},
+    util,
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -14,7 +16,7 @@ impl Driver for WgetDriver {
     /// Start a download using `wget`.
     fn start(
         &self,
-        req: RequestBuilder,
+        req: Request,
         sink: DownloadSink,
         cancel: Arc<AtomicBool>,
     ) -> Result<JoinHandle<Result<DownloadResult, ResponseError>>, StartError> {
@@ -25,7 +27,7 @@ impl Driver for WgetDriver {
             // Avoid reusing a single TCP connection across redirects; ELBs (e.g. httpbin)
             // sometimes return 502 on a stale keep-alive after a redirect chain.
             .arg("--no-http-keep-alive")
-            .arg(&req.url);
+            .arg(req.url.to_url_string());
         if !req.follow_redirects {
             cmd.arg("--max-redirect=0");
         } else {
@@ -41,7 +43,7 @@ impl Driver for WgetDriver {
 
 fn download_wget(
     output: std::process::Output,
-    _req: &RequestBuilder,
+    _req: &Request,
 ) -> Result<(u16, Option<crate::ContentEncoding>), ResponseError> {
     let stderr = String::from_utf8_lossy(&output.stderr);
     let mut last_code: Option<u16> = None;

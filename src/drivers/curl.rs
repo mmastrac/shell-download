@@ -3,7 +3,9 @@ use std::sync::{Arc, atomic::AtomicBool};
 use std::thread::JoinHandle;
 
 use crate::{
-    DownloadResult, DownloadSink, RequestBuilder, ResponseError, StartError, drivers::Driver, util,
+    DownloadResult, DownloadSink, ResponseError, StartError,
+    drivers::{Driver, Request},
+    util,
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -14,7 +16,7 @@ impl Driver for CurlDriver {
     /// Start a download using `curl`.
     fn start(
         &self,
-        req: RequestBuilder,
+        req: Request,
         sink: DownloadSink,
         cancel: Arc<AtomicBool>,
     ) -> Result<JoinHandle<Result<DownloadResult, ResponseError>>, StartError> {
@@ -25,7 +27,7 @@ impl Driver for CurlDriver {
             .arg("-")
             .arg("-w")
             .arg("%{stderr}%{http_code}")
-            .arg(&req.url);
+            .arg(req.url.to_url_string());
 
         if req.follow_redirects {
             cmd.arg("-L");
@@ -41,7 +43,7 @@ impl Driver for CurlDriver {
 
 fn download_curl(
     output: std::process::Output,
-    _req: &RequestBuilder,
+    _req: &Request,
 ) -> Result<(u16, Option<crate::ContentEncoding>), ResponseError> {
     let code_str = String::from_utf8_lossy(&output.stderr).trim().to_string();
     let code: u16 = code_str

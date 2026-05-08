@@ -1,6 +1,6 @@
 [package]
 name = "shell-download"
-version = "0.21.0"
+version = "0.22.0"
 edition = "2024"
 authors = ["Matt Mastracci <matthew@mastracci.com>"]
 license = "Apache-2.0 OR MIT"
@@ -22,10 +22,11 @@ default = []
 url = ["dep:url"]
 
 [profile.release]
-opt-level = 3
+opt-level = "z"
 lto = true
-panic = "abort"
 codegen-units = 1
+debug = false
+strip = "symbols"
 
 [dependencies]
 url = { version = "2.5", optional = true, default-features = false }

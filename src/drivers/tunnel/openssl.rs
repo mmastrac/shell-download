@@ -7,8 +7,11 @@ use std::sync::{
 use std::thread::{self, JoinHandle};
 
 use crate::{
-    ContentEncoding, DownloadResult, DownloadSink, RequestBuilder, ResponseError, StartError,
-    drivers::Driver, process, url_parser::Url, util,
+    ContentEncoding, DownloadResult, DownloadSink, ResponseError, StartError,
+    drivers::{Driver, Request},
+    process,
+    url_parser::Url,
+    util,
 };
 
 use super::http11;
@@ -20,14 +23,11 @@ pub(crate) struct OpenSslDriver;
 impl Driver for OpenSslDriver {
     fn start(
         &self,
-        req: RequestBuilder,
+        req: Request,
         sink: DownloadSink,
         cancel: Arc<AtomicBool>,
     ) -> Result<JoinHandle<Result<DownloadResult, ResponseError>>, StartError> {
-        let url = match Url::new(&req.url) {
-            Ok(u) => u,
-            Err(_) => return Err(StartError::NoDriverFound),
-        };
+        let url = req.url.clone();
         if url.scheme != "https" {
             return Err(StartError::NoDriverFound);
         }
@@ -41,7 +41,7 @@ impl OpenSslDriver {
     /// worker (first hop). Later redirect hops spawn a new client in the worker.
     fn start_https(
         _initial: Url,
-        req: RequestBuilder,
+        req: Request,
         sink: DownloadSink,
         cancel: Arc<AtomicBool>,
     ) -> Result<JoinHandle<Result<DownloadResult, ResponseError>>, StartError> {
@@ -70,7 +70,7 @@ fn openssl_s_client_command(url: &Url) -> Command {
 }
 
 fn download_https_with_first_child(
-    req: &RequestBuilder,
+    req: &Request,
     _sink: &DownloadSink,
     cancel: &Arc<AtomicBool>,
     pipe_writer: std::io::PipeWriter,
@@ -90,7 +90,7 @@ fn download_https_with_first_child(
 
 fn fetch_https_spawn_child(
     url: &Url,
-    req: &RequestBuilder,
+    req: &Request,
     cancel: &Arc<AtomicBool>,
 ) -> Result<http11::HttpResponseParts, ResponseError> {
     let mut cmd = openssl_s_client_command(url);
