@@ -1,8 +1,9 @@
-use std::path::Path;
 use std::sync::{Arc, atomic::AtomicBool};
 use std::thread::JoinHandle;
 
-use crate::{DownloadResult, RequestBuilder, ResponseError, StartError, drivers::Driver, util};
+use crate::{
+    DownloadResult, DownloadSink, RequestBuilder, ResponseError, StartError, drivers::Driver, util,
+};
 
 #[derive(Debug, Clone, Copy)]
 /// PowerShell (`pwsh`/`powershell`) backend.
@@ -13,10 +14,10 @@ impl Driver for PowerShellDriver {
     fn start(
         &self,
         req: RequestBuilder,
-        out_path: &Path,
+        sink: DownloadSink,
         cancel: Arc<AtomicBool>,
     ) -> Result<JoinHandle<Result<DownloadResult, ResponseError>>, StartError> {
-        start_inner(req, out_path, cancel)
+        start_inner(req, sink, cancel)
     }
 }
 
@@ -49,18 +50,16 @@ try {
   $sc=[int]$response.StatusCode;
 "#;
 
-/// Remainder: body stream to file, catch/finally/exit.
+/// Remainder: body stream to stdout, catch/finally/exit.
 const PS_HTTP_TRY_TAIL: &str = r#"
   $in=$response.Content.ReadAsStreamAsync().GetAwaiter().GetResult();
-  $sh=[System.IO.FileShare]::Write;
-  $outFs=[System.IO.File]::Open($o,[System.IO.FileMode]::Open,[System.IO.FileAccess]::Write,$sh);
+  $outFs=[System.Console]::OpenStandardOutput();
   try {
     $in.CopyTo($outFs);
     $outFs.Flush();
     $exitCode=0;
   } finally {
     if ($null -ne $in) { $in.Dispose() };
-    $outFs.Dispose();
   }
 } catch {
   [Console]::Error.WriteLine("shell-download(powershell): request failed");
@@ -75,7 +74,7 @@ exit $exitCode;
 /// Implementation for the PowerShell backend.
 fn start_inner(
     req: RequestBuilder,
-    out_path: &Path,
+    sink: DownloadSink,
     cancel: Arc<AtomicBool>,
 ) -> Result<JoinHandle<Result<DownloadResult, ResponseError>>, StartError> {
     let candidates = find_powershell_candidates();
@@ -83,8 +82,46 @@ fn start_inner(
         return Err(StartError::NoDriverFound);
     }
 
+    let script = generate_powershell_script(&req);
+    let mut last_io: Option<std::io::Error> = None;
+
+    for exe in candidates {
+        let mut cmd = std::process::Command::new(exe);
+        cmd.arg("-NoProfile")
+            .arg("-NonInteractive")
+            .arg("-ExecutionPolicy")
+            .arg("Bypass")
+            .arg("-Command")
+            .arg(&script);
+
+        match util::spawn_download_cmd_thread(
+            cmd,
+            exe,
+            req.clone(),
+            sink.clone(),
+            Arc::clone(&cancel),
+            download_pwsh,
+        ) {
+            Ok(h) => return Ok(h),
+            Err(StartError::NoDriverFound) => {}
+            Err(StartError::IoError(e)) => {
+                if last_io.is_none() {
+                    last_io = Some(e);
+                }
+            }
+            Err(StartError::Url(msg)) => return Err(StartError::Url(msg)),
+        }
+    }
+
+    if let Some(e) = last_io {
+        return Err(StartError::IoError(e));
+    }
+    Err(StartError::NoDriverFound)
+}
+
+fn generate_powershell_script(req: &RequestBuilder) -> String {
     let mut ps_headers = String::new();
-    for (k, v) in util::add_common_headers(&req) {
+    for (k, v) in util::add_common_headers(req) {
         ps_headers.push('\'');
         ps_headers.push_str(&escape_ps(&k));
         ps_headers.push_str("'='");
@@ -96,7 +133,6 @@ fn start_inner(
     headers_expr.push_str(&ps_headers);
     headers_expr.push('}');
     let url = escape_ps(&req.url);
-    let out_str = escape_ps(&out_path.to_string_lossy());
     let max_redir = if req.follow_redirects { 10 } else { 0 };
 
     let mut script = String::new();
@@ -104,8 +140,6 @@ fn start_inner(
     script.push_str(&headers_expr);
     script.push_str(";$u='");
     script.push_str(&url);
-    script.push_str("';$o='");
-    script.push_str(&out_str);
     script.push_str("';$mr=");
     script.push_str(&max_redir.to_string());
     script.push(';');
@@ -115,62 +149,23 @@ fn start_inner(
     script.push_str("$sc\");");
     script.push_str(PS_HTTP_TRY_TAIL);
 
-    let mut last_io: Option<std::io::Error> = None;
+    script
+}
 
-    let (child, program_label) = {
-        let mut started: Option<(std::process::Child, &'static str)> = None;
-        for exe in candidates {
-            let mut cmd = std::process::Command::new(exe);
-            cmd.arg("-NoProfile")
-                .arg("-NonInteractive")
-                .arg("-ExecutionPolicy")
-                .arg("Bypass")
-                .arg("-Command")
-                .arg(&script);
+fn download_pwsh(
+    output: std::process::Output,
+    _req: &RequestBuilder,
+) -> Result<(u16, Option<crate::ContentEncoding>), ResponseError> {
+    let stderr_str = String::from_utf8_lossy(&output.stderr).to_string();
+    let status_line = stderr_str
+        .lines()
+        .find_map(|line| line.trim().strip_prefix(PS_STATUS_PREFIX).map(str::trim));
+    let code_str = status_line.unwrap_or("").to_string();
+    let status_code: u16 = code_str
+        .parse()
+        .map_err(|_| ResponseError::BadStatusCode(code_str))?;
 
-            match util::spawn_child_for_output(cmd, exe) {
-                Ok(ch) => {
-                    started = Some((ch, exe));
-                    break;
-                }
-                Err(StartError::NoDriverFound) => {}
-                Err(StartError::IoError(e)) => {
-                    if last_io.is_none() {
-                        last_io = Some(e);
-                    }
-                }
-                Err(StartError::Url(msg)) => return Err(StartError::Url(msg)),
-            };
-        }
-
-        if let Some(v) = started {
-            v
-        } else if let Some(e) = last_io {
-            return Err(StartError::IoError(e));
-        } else {
-            return Err(StartError::NoDriverFound);
-        }
-    };
-
-    let out_path = out_path.to_path_buf();
-    Ok(util::spawn_download_thread(
-        req,
-        &out_path,
-        cancel,
-        move |req, _tmp_path, cancel| {
-            let output = util::wait_child_with_output(child, cancel, program_label, req.quiet)?;
-            let stderr_str = String::from_utf8_lossy(&output.stderr).to_string();
-            let status_line = stderr_str
-                .lines()
-                .find_map(|line| line.trim().strip_prefix(PS_STATUS_PREFIX).map(str::trim));
-            let code_str = status_line.unwrap_or("").to_string();
-            let status_code: u16 = code_str
-                .parse()
-                .map_err(|_| ResponseError::BadStatusCode(code_str))?;
-
-            Ok((status_code, None))
-        },
-    ))
+    Ok((status_code, None))
 }
 
 /// Escape a value for a single-quoted PowerShell string.

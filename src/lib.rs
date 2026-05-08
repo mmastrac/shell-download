@@ -1,16 +1,18 @@
 #![doc = include_str!("../README.md")]
 
 mod drivers;
-mod tempfile;
+mod process;
+mod sink;
 mod url_parser;
 mod util;
 
+pub use sink::DownloadSink;
+
+use std::fs::OpenOptions;
 use std::io;
-use std::path::{Path, PathBuf};
-use std::sync::{
-    Arc,
-    atomic::{AtomicBool, Ordering},
-};
+use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -24,8 +26,12 @@ pub enum Downloader {
     PowerShell,
     /// Use Python `urllib`.
     Python3,
-    /// Speak HTTP/1.1 via `openssl s_client` or TCP socket (best-effort).
-    OpenSsl,
+    /// Minimal HTTP/HTTPS tunnel: TCP for HTTP, OpenSSL (`openssl s_client`) for HTTPS.
+    Tunnel,
+    /// Plain HTTP/1.1 over a TCP socket only (no TLS).
+    Tcp,
+    /// HTTPS via OpenSSL only (`openssl s_client`).
+    OpenSSL,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -108,76 +114,61 @@ impl RequestBuilder {
             .map_err(|e| ResponseError::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, e)))
     }
 
-    /// Fetch the response body as a String, blocking until the download is
+    /// Fetch the response body into memory, blocking until the download is
     /// complete.
     pub fn fetch_bytes(self) -> Result<Vec<u8>, ResponseError> {
-        // Reserve a final path but do not keep an open handle: `join` /
-        // `finalize_download` replace that path, which fails on Windows with
-        // ERROR_ACCESS_DENIED if our `TmpFile` still holds the file open.
-        let tmp = crate::tempfile::create_tmp_file_in_path(
-            "in-memory",
-            None,
-            &std::env::temp_dir(),
-            "shell-download-in-memory",
-        )
-        .map_err(ResponseError::Io)?;
-        let target_path = tmp.as_ref().to_path_buf();
-        drop(tmp);
+        url_parser::Url::new(&self.url)
+            .map_err(|e| ResponseError::Start(StartError::Url(e.to_string())))?;
 
-        let handle = self
-            .start_internal(target_path.clone())
+        let cancel = Arc::new(AtomicBool::new(false));
+        let buffer = Arc::new(Mutex::new(Vec::new()));
+        let memory_root = DownloadSink::buffer(buffer.clone());
+        let join = self
+            .start_first_backend(Arc::clone(&cancel), memory_root.clone())
             .map_err(ResponseError::Start)?;
-        let _res = handle.join()?;
 
-        let out = std::fs::read(&target_path).map_err(ResponseError::Io)?;
-        let _ = std::fs::remove_file(&target_path);
-        Ok(out)
+        join.join().map_err(|_| ResponseError::ThreadPanicked)??;
+
+        Ok(std::mem::take(&mut *buffer.lock().unwrap()))
     }
 
     /// Start the download in a background thread.
     pub fn start(self, target_path: impl AsRef<Path>) -> Result<RequestHandle, StartError> {
-        let target_path = target_path.as_ref().to_path_buf();
-
-        if let Some(parent) = target_path.parent() {
-            if !parent.as_os_str().is_empty() {
-                std::fs::create_dir_all(parent).map_err(StartError::IoError)?;
-            }
-        }
-
-        let _ = std::fs::remove_file(&target_path);
-        self.start_internal(target_path)
-    }
-
-    fn start_internal(self, target_path: PathBuf) -> Result<RequestHandle, StartError> {
         // URL preflight: fail early with a message useful to callers.
         let url = url_parser::Url::new(&self.url).map_err(|e| StartError::Url(e.to_string()))?;
 
-        let parent = target_path.parent().unwrap_or_else(|| Path::new("."));
-        let hint = target_path
-            .file_name()
-            .and_then(|s| s.to_str())
-            .unwrap_or("download");
-        let tmp_path =
-            crate::tempfile::create_tmp_file_in_path("download", Some(&url), parent, hint)
-                .map_err(StartError::IoError)?;
+        let target_file = OpenOptions::new()
+            .create(true)
+            .truncate(true)
+            .write(true)
+            .open(&target_path)?;
 
         let cancel = Arc::new(AtomicBool::new(false));
+        let sink = DownloadSink::file(target_file);
+        let join = self.start_first_backend(cancel.clone(), sink)?;
+
+        Ok(RequestHandle {
+            cancel,
+            join: Some(join),
+        })
+    }
+
+    /// Run [`candidate_downloaders`] once; `next_sink` prepares the body sink for each attempt.
+    fn start_first_backend(
+        &self,
+        cancel: Arc<AtomicBool>,
+        sink: DownloadSink,
+    ) -> Result<JoinHandle<Result<DownloadResult, ResponseError>>, StartError> {
         let mut saw_non_not_found: Option<io::Error> = None;
         let mut saw_any_not_found = false;
 
         for d in candidate_downloaders(&self.preferred) {
             match d
                 .driver()
-                .start(self.clone(), tmp_path.as_ref(), Arc::clone(&cancel))
+                .start(self.clone(), sink.clone(), Arc::clone(&cancel))
             {
-                Ok(join) => {
-                    return Ok(RequestHandle {
-                        cancel,
-                        join: Some(join),
-                        target_path,
-                        tmp_path: Some(tmp_path),
-                    });
-                }
+                Ok(join) => return Ok(join),
+                Err(StartError::Url(msg)) => return Err(StartError::Url(msg)),
                 Err(StartError::NoDriverFound) => {
                     saw_any_not_found = true;
                     continue;
@@ -188,7 +179,6 @@ impl RequestBuilder {
                     }
                     continue;
                 }
-                Err(StartError::Url(msg)) => return Err(StartError::Url(msg)),
             }
         }
 
@@ -204,19 +194,14 @@ impl RequestBuilder {
 
 impl Downloader {
     pub(crate) fn driver(self) -> &'static dyn drivers::Driver {
-        static CURL: drivers::curl::CurlDriver = drivers::curl::CurlDriver;
-        static WGET: drivers::wget::WgetDriver = drivers::wget::WgetDriver;
-        static POWERSHELL: drivers::powershell::PowerShellDriver =
-            drivers::powershell::PowerShellDriver;
-        static PYTHON3: drivers::python3::Python3Driver = drivers::python3::Python3Driver;
-        static OPENSSL: drivers::openssl::OpenSslDriver = drivers::openssl::OpenSslDriver;
-
         match self {
-            Downloader::Curl => &CURL,
-            Downloader::Wget => &WGET,
-            Downloader::PowerShell => &POWERSHELL,
-            Downloader::Python3 => &PYTHON3,
-            Downloader::OpenSsl => &OPENSSL,
+            Downloader::Curl => &drivers::curl::CurlDriver,
+            Downloader::Wget => &drivers::wget::WgetDriver,
+            Downloader::PowerShell => &drivers::powershell::PowerShellDriver,
+            Downloader::Python3 => &drivers::python3::Python3Driver,
+            Downloader::Tunnel => &drivers::tunnel::TunnelDriver,
+            Downloader::Tcp => &drivers::tunnel::TcpDriver,
+            Downloader::OpenSSL => &drivers::tunnel::OpenSslDriver,
         }
     }
 }
@@ -226,8 +211,6 @@ impl Downloader {
 pub struct RequestHandle {
     cancel: Arc<AtomicBool>,
     join: Option<JoinHandle<Result<DownloadResult, ResponseError>>>,
-    target_path: std::path::PathBuf,
-    tmp_path: Option<crate::tempfile::TmpFile>,
 }
 
 impl RequestHandle {
@@ -236,15 +219,13 @@ impl RequestHandle {
         self.cancel.store(true, Ordering::SeqCst);
     }
 
-    /// Wait for completion and finalize the output file.
+    /// Wait for completion and move the temp download to the target path.
     pub fn join(mut self) -> Result<Response, ResponseError> {
         let res = match self.join.take().expect("join called once").join() {
             Ok(r) => r,
             Err(_) => Err(ResponseError::ThreadPanicked),
         }?;
 
-        let tmp_path = self.tmp_path.take().expect("tmp_path present");
-        util::finalize_download(tmp_path, &self.target_path, res.content_encoding)?;
         Ok(Response {
             status_code: res.status_code,
         })
@@ -335,6 +316,6 @@ fn candidate_downloaders(preferred: &[Downloader]) -> Vec<Downloader> {
         Downloader::Wget,
         Downloader::PowerShell,
         Downloader::Python3,
-        Downloader::OpenSsl,
+        Downloader::Tunnel,
     ]
 }
